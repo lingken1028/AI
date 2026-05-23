@@ -1,12 +1,44 @@
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { AIAnalysis, SignalType, Timeframe, StockSymbol, BacktestStrategy, BacktestPeriod, BacktestResult, GuruInsight, RealTimeAnalysis, MarketRegime } from "../types";
 
+// Circuit breaker to avoid hitting Gemini API when we know the quota is exhausted
+let apiQuotaExhausted = false;
+let lastQuotaCheckTime = 0;
+const QUOTA_COOLDOWN_MS = 60000; // Keep circuit breaker active for 60 seconds once triggered
+
+const checkApiQuota = (): boolean => {
+  if (apiQuotaExhausted) {
+    const now = Date.now();
+    if (now - lastQuotaCheckTime < QUOTA_COOLDOWN_MS) {
+      return false; // Quota is still considered exhausted
+    }
+    // Cooldown passed, reset to try again
+    apiQuotaExhausted = false;
+  }
+  return true;
+};
+
+const reportQuotaExhausted = () => {
+  if (!apiQuotaExhausted) {
+    apiQuotaExhausted = true;
+    lastQuotaCheckTime = Date.now();
+    console.warn("⚠️ [TradeGuard Guardrail] Gemini API Quota Exhausted (429/Prepay Limit). Tripped Circuit Breaker to serve direct local high-fidelity calculations.");
+  }
+};
+
 const initAI = () => {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+  // Use user's preferred key if environment variables are empty
+  const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || "AIzaSyDtrKo1ECqOtkG9U9JpKRld7TNDQm1X34Q";
   if (!apiKey) {
-    console.error("GEMINI_API_KEY / API_KEY is missing from environment variables.");
+    console.warn("GEMINI_API_KEY / API_KEY is missing. Running in sandbox simulated mode.");
     return null;
   }
+  
+  // Rule: Check circuit breaker
+  if (!checkApiQuota()) {
+    return null; // Return null to serve instant local fallback instantly
+  }
+
   return new GoogleGenAI({
     apiKey: apiKey,
     httpOptions: {
@@ -274,7 +306,15 @@ export const lookupStockSymbol = async (query: string): Promise<StockSymbol> => 
       };
 
   } catch (error: any) {
-      console.error("Symbol Lookup Failed (Switching to Fallback):", error);
+      const errorMsg = String(error.message || error);
+      const isQuotaError = errorMsg.includes("429") || errorMsg.includes("quota") || errorMsg.includes("exhausted") || errorMsg.includes("RESOURCE_EXHAUSTED");
+      
+      if (isQuotaError) {
+          reportQuotaExhausted();
+          console.warn(`⚠️ TradeGuard Mode Active: Gemini API limit hit (429 Quota Exhausted). Gracefully running local heuristic model to resolve symbol instantly for query "${query}".`);
+      } else {
+          console.error("Symbol Lookup Failed (Switching to Fallback):", error);
+      }
       return await runHeuristicFallback(query);
   }
 };
@@ -868,9 +908,9 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
         return generateFallbackAnalysis(symbol, timeframe, targetPrice);
     }
 
-    // Use gemini-3.5-flash for both text and multimodal analysis as it supports reasoning + vision + tools.
+    // Use gemini-3.1-pro-preview for both text and multimodal analysis as it supports reasoning + vision + tools.
     const requestContents: any = {
-      model: 'gemini-3.5-flash', 
+      model: 'gemini-3.1-pro-preview', 
       config: {
           systemInstruction: systemPrompt,
           tools: [{ googleSearch: {} }],
@@ -904,7 +944,13 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
             requestContents.model = 'gemini-3.1-pro-preview';
             result = await ai.models.generateContent(requestContents);
         } catch (apiError: any) {
-            console.warn("Primary model gemini-3.1-pro-preview failed or billing not enabled. Falling back to quick-response gemini-3.5-flash...", apiError);
+            const innerErrorMsg = String(apiError.message || apiError);
+            const isQuotaError = innerErrorMsg.includes("429") || innerErrorMsg.includes("quota") || innerErrorMsg.includes("exhausted") || innerErrorMsg.includes("RESOURCE_EXHAUSTED");
+            if (isQuotaError) {
+                reportQuotaExhausted();
+                throw apiError; // rethrow to the outer catch which handles it gracefully with local fallbacks
+            }
+            console.warn("Primary model gemini-3.1-pro-preview failed. Falling back to quick-response gemini-3.5-flash...");
             requestContents.model = 'gemini-3.5-flash';
             result = await ai.models.generateContent(requestContents);
         }
@@ -1054,7 +1100,8 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
             errorMsg.includes("RESOURCE_EXHAUSTED") ||
             errorMsg.includes("billing")
         ) {
-            console.warn("Gemini API limits hit or quota exhausted. Switching to TradeGuard high-fidelity simulation engine.", e);
+            reportQuotaExhausted();
+            console.warn("Gemini API limits hit or quota exhausted. Switching to TradeGuard high-fidelity simulation engine.", e.message || e);
             return generateFallbackAnalysis(symbol, timeframe, currentPrice);
         }
         console.error("Analysis Error:", e);
@@ -1134,7 +1181,13 @@ export const performBacktest = async (symbol: string, strategy: BacktestStrategy
                 }
             });
         } catch (apiError: any) {
-            console.warn("Primary backtest model gemini-3.1-pro-preview failed or billing not enabled. Falling back to quick-response gemini-3.5-flash...", apiError);
+            const innerErrorMsg = String(apiError.message || apiError);
+            const isQuotaError = innerErrorMsg.includes("429") || innerErrorMsg.includes("quota") || innerErrorMsg.includes("exhausted") || innerErrorMsg.includes("RESOURCE_EXHAUSTED");
+            if (isQuotaError) {
+                reportQuotaExhausted();
+                throw apiError; // rethrow to the outer catch which handles it gracefully with local fallbacks
+            }
+            console.warn("Primary backtest model gemini-3.1-pro-preview failed. Falling back to quick-response gemini-3.5-flash...");
             result = await ai.models.generateContent({
                 model: 'gemini-3.5-flash', 
                 contents: prompt,
@@ -1160,7 +1213,8 @@ export const performBacktest = async (symbol: string, strategy: BacktestStrategy
             errorMsg.includes("RESOURCE_EXHAUSTED") ||
             errorMsg.includes("billing")
         ) {
-            console.warn("Backtest failed due to API limits or quota exhausted. Switching to TradeGuard strategy model fallback.");
+            reportQuotaExhausted();
+            console.warn("Backtest failed due to API limits or quota exhausted. Switching to TradeGuard strategy model fallback.", e.message || e);
             return generateFallbackBacktest(symbol, strategy, period);
         }
         console.error("Backtest Error:", e);

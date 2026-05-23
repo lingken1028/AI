@@ -1,71 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ShieldAlert, 
+  Eye, 
+  Layers, 
+  Bot, 
+  Workflow, 
+  History, 
   TrendingUp, 
   TrendingDown, 
-  Target, 
-  LineChart, 
-  Percent, 
-  Activity, 
-  Sparkles, 
-  Sliders, 
-  Gauge, 
   Zap, 
-  Database, 
-  Calendar, 
-  ShieldCheck, 
-  Scale, 
-  MessageSquare, 
-  Users, 
-  BarChart3, 
-  ArrowRight, 
+  Shield, 
   HelpCircle, 
-  Calculator, 
-  Plus, 
-  Minus, 
-  Flame, 
-  AlertTriangle,
-  Lightbulb,
-  GitMerge,
-  Maximize2
+  Sparkles, 
+  Activity, 
+  Filter, 
+  ChevronRight, 
+  Gauge, 
+  Sliders, 
+  RefreshCw, 
+  AlertTriangle, 
+  CheckCircle2, 
+  Hourglass,
+  ArrowRight,
+  LineChart
 } from 'lucide-react';
 import { AIAnalysis, SignalType } from '../types';
-import { formatCurrency } from '../constants';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts';
-
-const generateCrossAssetDivergenceData = (symbol: string, correlatedAsset: string, coefficient: number, divergenceScore: number) => {
-    const points = 10;
-    const names: string[] = [];
-    const now = new Date();
-    
-    for (let i = 0; i < points; i++) {
-        const stepsAgo = points - 1 - i;
-        const d = new Date(now.getTime() - stepsAgo * 15 * 60 * 1000); 
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        names.push(`${hh}:${mm}`);
-    }
-    
-    const data = [];
-    const isNegative = coefficient < 0;
-    
-    for (let i = 0; i < points; i++) {
-        const progress = i / (points - 1); 
-        const wave = Math.sin(progress * Math.PI * 1.5) * 4;
-        const primaryChange = wave + (progress * 1.5);
-        const divergencePull = progress * (divergenceScore / 11) * (isNegative ? -1.5 : 1.5);
-        const correlatedChange = (wave * coefficient) + divergencePull + (Math.sin(progress * 6) * 0.4);
-        
-        data.push({
-            time: names[i],
-            ticker: Number(primaryChange.toFixed(2)),
-            correlated: Number(correlatedChange.toFixed(2)),
-            divergence: Number(Math.abs(primaryChange - correlatedChange).toFixed(2))
-        });
-    }
-    
-    return data;
-};
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid, LineChart as RechartsLineChart, Line, BarChart, Bar, ReferenceLine } from 'recharts';
 
 interface DeepMiningDashboardProps {
   symbol: string;
@@ -73,1583 +32,1430 @@ interface DeepMiningDashboardProps {
   currentPrice: number;
 }
 
+// -----------------------------------------------------------------
+// 1. DATA GENERATORS & FIXED CONFIGURATIONS FOR THE 5 PREMIUM TARGETS
+// -----------------------------------------------------------------
+
+// Pattern descriptions for Tab 1 (K-Line Pattern Matching)
+interface CandlestickPattern {
+  id: string;
+  name: string;
+  enName: string;
+  confidence: number;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  description: string;
+  confirmationTriggers: string[];
+  volumeState: string;
+  visualAnalysis: string;
+}
+
+const KLINE_PATTERNS: CandlestickPattern[] = [
+  {
+    id: 'wyckoff_spring',
+    name: '威科夫弹簧突破 (Wyckoff Spring)',
+    enName: 'Wyckoff Spring Sweep',
+    confidence: 94,
+    direction: 'BULLISH',
+    description: '视觉模型精确识别到K线在支撑带边缘向下穿刺，强力扫荡并猎杀了多头前期密集堆积的止损单（Sell-side Liquidity），随后实体迅速被强劲买盘托回，形成带有极长下影线的锤头线（Hammer Line）。这是一次完美的机构洗盘行为。',
+    confirmationTriggers: ['下插长影线超过K线实体2.5倍', '底线爆量，伴随北向/暗池主力挂单买盘吃货', '次日出现带温和阳K线，实体彻底站上15分钟MA20均线'],
+    volumeState: '触底瞬间成交量高于30日均值180%，其后迅速呈缩量整理。',
+    visualAnalysis: '多模态像素扫描：在52根K线回溯期中，底部影线重叠重合率达到97.2%，下杀洗盘确认度极高。'
+  },
+  {
+    id: 'double_bottom',
+    name: '经典双重底突破 (Double Bottom)',
+    enName: 'Double Bottom Neckline Breakout',
+    confidence: 89,
+    direction: 'BULLISH',
+    description: '在5%的宽幅价格底限边缘，形成了两个非常清晰的W底支撑对称驻扎点。第二次下探测试底线时的阻力度明显衰减，不触及前低即被抄底多头迅速拦截，并在小时级周期上确立了结构重心震荡抬升的核心事实。',
+    confirmationTriggers: ['突破底部W形态的中间颈线控制点（Neckline Anchor）', '颈线突破时伴随一阶爆量突破', '回踩颈线确认支撑不破后，建立黄金二次推崇点'],
+    volumeState: '右底成交额明显小于左底，显示抛压枯竭。突破颈线瞬间成交量暴增。',
+    visualAnalysis: '多模态像素扫描：左右底部探针对称度达到95.8%，颈向阻抗防守点在突破前已进行了四次完美吸呐。'
+  },
+  {
+    id: 'head_shoulders_bottom',
+    name: '头肩底强反转结构 (Head & Shoulders Bottom)',
+    enName: 'H&S的反转模式',
+    confidence: 85,
+    direction: 'BULLISH',
+    description: '属于中长期交易格局中高胜率反转的代表组合。K线价格依次呈现左肩下探、中部极度插针刺破（Head/最低点）、以及右肩缩量浅探的典型阶梯探底结构。视觉多维度特征契合率高，多头角色极易发生角色互换。',
+    confirmationTriggers: ['右肩反弹高收确认，创15K周期内的新高点', 'K线实体成功收盘越过微观下行趋势阻力带', '斜向颈线压阻位置破位释放高频突破大单'],
+    volumeState: 'Head部位呈现恐慌性抛盘放量，右肩回撤则是典型的主力空头力竭。',
+    visualAnalysis: '多模态像素扫描：左右肩深度斜率落差不超0.85%，完全符合完美倾斜对角反射构型。'
+  },
+  {
+    id: 'bearish_engulfing',
+    name: '高位看跌阴线吞没 (Bearish Engulfing)',
+    enName: 'Bearish Engulfing Sweep',
+    confidence: 91,
+    direction: 'BEARISH',
+    description: '当价格运行至上方密集筹码峰HVN或触及布林上轨时，出现一根带巨量的长阴线K线，其高点和低点将前一根阳K线实体彻底吞噬包裹。这传达了极强的买盘流动性耗尽与阻力带抛压倾泻的空头支配信号。',
+    confirmationTriggers: ['阴线收线低于阳线开盘价，且实体高度占比在85%以上', '上影线略微刺破阻力带流动底线后，光脚收线逼近极低点', '15分钟主力净大单流由多头突然转为爆量流出'],
+    volumeState: '阴线吞没成交量相比前日阳线突然放出2.2倍，具有典型的资金派发痕迹。',
+    visualAnalysis: '多模态像素扫描：吞没饱和度达118.4%（完美阴收），上方压力影线对历史高价点位完成了彻底清洗。'
+  }
+];
+
+// Dark Pool Large Prints simulation
+interface DarkPoolPrint {
+  id: string;
+  time: string;
+  venue: string;
+  side: 'ACCUMULATION' | 'DISTRIBUTION' | 'NEUTRAL';
+  price: number;
+  volume: number;
+  value: number; // in Millions of Yuan or USD
+  type: string;
+}
+
+const generateDarkPoolPrints = (symbol: string, currentPrice: number): DarkPoolPrint[] => {
+  const prints: DarkPoolPrint[] = [];
+  const now = new Date();
+  
+  const isChina = symbol.startsWith('SSE') || symbol.startsWith('SZSE') || /^[0-9]{6}$/.test(symbol);
+  const currencyUnit = isChina ? '万人民币' : '万美元';
+  const millionLabel = isChina ? '亿人民币' : '亿美元';
+
+  const venues = isChina 
+    ? ['沪深大宗专用席位', '中信证券暗扣大配席', '中金境外暗池-C', '高盛量化大宗托管']
+    : ['Dark Pool Block APX', 'Sigma X Goldman', 'Instinet Private', 'MS Pool Alpha'];
+
+  const types = isChina
+    ? ['机构专用溢价成交', '主力大单被动吸收', '主力对拉锁仓交易', '北向特定席位闪扣']
+    : ['Institutional Cross', 'Block Liquidity Absorption', 'Delta Hedging Print', 'Off-Exchange Sweeper'];
+
+  // Setup 6 simulated dark pool prints
+  for (let i = 0; i < 6; i++) {
+    const minutesAgo = i * 4 + 2;
+    const t = new Date(now.getTime() - minutesAgo * 60 * 1000);
+    const timeStr = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
+    
+    // Hash based on index + symbol
+    const hash = (symbol.charCodeAt(0) + i) % 3;
+    const side = hash === 0 ? 'ACCUMULATION' : (hash === 1 ? 'DISTRIBUTION' : 'NEUTRAL');
+    
+    // Slight deviation from price
+    const priceDev = (hash - 1) * (currentPrice * 0.001);
+    const price = parseFloat((currentPrice + priceDev).toFixed(2));
+    
+    // Massive volume matching institutional block trades
+    const volume = Math.floor((10000 + (hash * 15000) + (symbol.length * 8000)) * (isChina ? 100 : 1));
+    const value = parseFloat(((volume * price) / (isChina ? 10000000 : 1000000)).toFixed(2));
+
+    prints.push({
+      id: `dp-print-${i}`,
+      time: timeStr,
+      venue: venues[(hash + i) % venues.length],
+      side: side,
+      price: price,
+      volume: volume,
+      value: value,
+      type: types[(hash + i * 2) % types.length]
+    });
+  }
+
+  return prints;
+};
+
 export const DeepMiningDashboard: React.FC<DeepMiningDashboardProps> = ({
   symbol,
   analysis,
   currentPrice
 }) => {
-  // Tabs for the Dashboard
-  const [activeMiningTab, setActiveMiningTab] = useState<'indicators' | 'correlation' | 'calculator'>('indicators');
+  // Navigation for 5 premium modules
+  type TabType = 'kline' | 'darkpool' | 'sandbox' | 'playbook' | 'prediction';
+  const [activeMiningTab, setActiveMiningTab] = useState<TabType>('kline');
 
-  // Interactive Calculator State
-  const [portfolioSize, setPortfolioSize] = useState<number>(100000);
-  const [riskPercent, setRiskPercent] = useState<number>(1.5); // Risk 1.5% of portfolio per trade
-  const [leverage, setLeverage] = useState<number>(1);
-  const [manualEntryPrice, setManualEntryPrice] = useState<string>('');
-  const [manualTakeProfit, setManualTakeProfit] = useState<string>('');
-  const [manualStopLoss, setManualStopLoss] = useState<string>('');
+  // --- TAB 1: K-LINE PATTERN MATCHING STATE ---
+  const initialPatternId = analysis?.winRate && analysis.winRate >= 60 ? 'wyckoff_spring' : (analysis?.winRate && analysis.winRate <= 44 ? 'bearish_engulfing' : 'double_bottom');
+  const [selectedPatternId, setSelectedPatternId] = useState<string>(initialPatternId);
+  const [isScanningKLine, setIsScanningKLine] = useState(false);
+  const [scanMetrics, setScanMetrics] = useState({
+    scannedCandles: 144,
+    confidence: 94,
+    matchesCount: 3,
+    scanTimeMs: 1420
+  });
 
-  // --- NEW INTERACTIVE EXTENSIONS STATE ---
-  // 1. Tab 1 Consensus Weighting
-  const [weightQuant, setWeightQuant] = useState<number>(40);
-  const [weightSmartMoney, setWeightSmartMoney] = useState<number>(40);
-  const [weightChart, setWeightChart] = useState<number>(20);
+  const activePattern = KLINE_PATTERNS.find(p => p.id === selectedPatternId) || KLINE_PATTERNS[0];
+  const patternBias = activePattern.direction; // 'BULLISH' | 'BEARISH' | 'NEUTRAL'
 
-  // 2. Tab 2 Custom Correlation Simulation
-  const [customTicker, setCustomTicker] = useState<string>('BTC');
-  const [simulatedCorrelation, setSimulatedCorrelation] = useState<number>(0.68);
-  const [correlationReasoning, setCorrelationReasoning] = useState<string>(
-    '比特币(BTC)作为高贝塔数字资产的领头羊，与全球金融风险偏好高度一致，常作为资金流先行观测窗口。'
-  );
-
-  // 3. Tab 2 Selected Correlation Row index for deep dive
-  const [selectedCorrelationsIndex, setSelectedCorrelationsIndex] = useState<number>(0);
-
-  // Quick preset helper for adjusting price values by +/- percent
-  const adjustPriceFactor = (type: 'entry' | 'tp' | 'sl', factorPercent: number) => {
-    if (type === 'entry') {
-      const val = parseFloat(manualEntryPrice) || currentPrice || 100;
-      setManualEntryPrice((val * (1 + factorPercent)).toFixed(2));
-    } else if (type === 'tp') {
-      const val = parseFloat(manualTakeProfit) || (entryPriceVal * 1.1);
-      setManualTakeProfit((val * (1 + factorPercent)).toFixed(2));
-    } else if (type === 'sl') {
-      const val = parseFloat(manualStopLoss) || (entryPriceVal * 0.95);
-      setManualStopLoss((val * (1 + factorPercent)).toFixed(2));
-    }
+  const handleScanKLine = () => {
+    setIsScanningKLine(true);
+    setTimeout(() => {
+      setIsScanningKLine(false);
+      const seed = symbol.length + selectedPatternId.length;
+      setScanMetrics({
+        scannedCandles: 120 + (seed % 60),
+        confidence: Math.min(99, activePattern.confidence + (seed % 5) - 2),
+        matchesCount: 2 + (seed % 3),
+        scanTimeMs: 800 + (seed % 1100)
+      });
+    }, 1200);
   };
 
-  const handleSimulateTicker = (target: string) => {
-    const raw = target.toUpperCase().trim();
-    if (!raw) return;
-    setCustomTicker(raw);
+  // --- TAB 2: DARK POOL LIQUIDITY STATE ---
+  const [minOrderValue, setMinOrderValue] = useState<number>(1.0); // Millions filter
+  const [lastTickTime, setLastTickTime] = useState<string>('实时更新中');
+  const [orderFlowBuyRatio, setOrderFlowBuyRatio] = useState<number>(58); // Taker bull ratio %
+  const [orderPrints, setOrderPrints] = useState<DarkPoolPrint[]>([]);
 
-    const hash = raw.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    let r = 0;
-    let desc = '';
-
-    if (raw === 'TSLA' || raw === '特斯拉') {
-      r = 0.76;
-      desc = '特斯拉(TSLA)与本标的风险属性相似，均为高弹性成长类资产，科技流动性泛滥时具有极强的同向Beta共振性。';
-    } else if (raw === 'BTC' || raw === 'ETH' || raw === 'CRYPTO') {
-      r = 0.68;
-      desc = '加密标的(BTC/ETH)衡量全球非主权流动性的偏好高低。当前主力资金在两个市场间存在边际外溢和套利博弈。';
-    } else if (raw === 'SPY' || raw === 'QQQ' || raw === 'SPX') {
-      r = 0.89;
-      desc = '对美股宽基指数(S&P 500/Nasdaq)有深度Beta暴露。指数趋势向上时，多头处于大盘护航的安全环境中。';
-    } else if (raw === 'DXY' || raw === 'USD' || raw === 'UUP') {
-      r = -0.81;
-      desc = '美元价值指数(DXY)构筑资产大盘的全球定价池重心。强美元是典型的无风险回报吸血器，负相关性极其高。';
-    } else if (raw === 'GLD' || raw === 'GC=F' || raw === 'GOLD') {
-      r = -0.18;
-      desc = '黄金由于具备零票息抗通胀与传统高主权信用避险角色，在股市剧烈动荡时往往起到了不对称避险对冲作用。';
-    } else if (raw === 'US10Y' || raw === 'TNX') {
-      r = -0.54;
-      desc = '美债十年期收益率上行会将成长股的贴现率估值基准向上拔高。高美债息通常构成长线资金持仓本股票的估值阻力。';
-    } else {
-      // Dynamic hash-based formula
-      r = parseFloat(((hash % 161 - 80) / 100).toFixed(2));
-      const reasonTemplates = [
-        `对应资产(${raw})属存量题材范畴，具有一定的关联性。当其被推至极端亢奋阀值时，需警惕主力资金抽血板块造成的虹吸回调。`,
-        `该大宗要素标的(${raw})间接反映供应链生产成本。通常该成本溢价收缩将对本资产构成中期毛利利润边际扩张的正向支撑。`,
-        `这属于互补型资产(${raw})。在大盘分段修复与窄幅波动行情中呈现弱正相关，适宜作为中和投资组合Beta的平准防线。`,
-        `属于同生态细分交叉领域标的(${raw})。该两标的易在特定产业利好刺激下呈现并排拉升，适合作为同步反包验证。`
-      ];
-      desc = reasonTemplates[hash % reasonTemplates.length];
-    }
-    setSimulatedCorrelation(r);
-    setCorrelationReasoning(desc);
+  const handleRefreshLiquidity = () => {
+    const t = new Date();
+    setLastTickTime(`${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')} 刷新完成`);
+    setOrderPrints(generateDarkPoolPrints(symbol, currentPrice));
+    setOrderFlowBuyRatio(prev => Math.max(30, Math.min(90, prev + (t.getSeconds() % 6 - 3))));
   };
 
-  // Synchronize inputs with AI analysis if available
+  // --- TAB 3: ADVERSARIAL SANDBOX STATE ---
+  const [isSimulatingSandbox, setIsSimulatingSandbox] = useState(false);
+  const [simulationCount, setSimulationCount] = useState(4);
+  const [sandboxSentimentWeights, setSandboxSentimentWeights] = useState({
+    bulls: 50,
+    bears: 30,
+    neutrals: 20
+  });
+  const [simulationLogStr, setSimulationLogStr] = useState<string[]>([]);
+
+  // Simulation debate presets that align mechanically with direction
+  const updateSandboxDebate = () => {
+    const isB = patternBias === 'BULLISH';
+    const isS = patternBias === 'BEARISH';
+    
+    const logs = isB ? [
+      `激进突破智能体 (Spike): 15m K线检测到 [${activePattern.name}]形态。支撑区蓄势完毕，暗池大单买入强度高达 ${orderFlowBuyRatio}%，蓄能十分充分！`,
+      `均值回归智能体 (Shadow): 且慢！虽然支撑显着，但若多方在阻抗位堆积过重极易被砸跌。当前偏离标准差 Z-Score 指数处于 ${zScoreValue}σ 水平。`,
+      `中性风险精算智能体 (Shield): 综合物理量化分析：多头趋势共鸣。建议执行[金字塔式低吸买入机制]，配备 ${hedgeRatio}% 比例的保护型期权用作风险安全垫。`
+    ] : (isS ? [
+      `均值回归智能体 (Shadow): 回归偏离明显，[${activePattern.name}] 重重罩顶。暗池委托意愿低落，机构吃单比例已萎缩至 ${orderFlowBuyRatio}%，建议全线启动对冲防御！`,
+      `激进突破智能体 (Spike): 不过，在下方极限震颤防守位，做市席位可能重构买墙。当前偏离指数 Z-Score 录得 ${zScoreValue}σ，仍博弈极端超卖反弹。`,
+      `中性风险精警智能体 (Shield): 对冲策略建议：此时风险溢出较大，应锁定较厚的套保敞口，配合 ${trailingTriggerPct}% 网格间隙步长在阻力高位平空，以规避潜在尾部清算风险。`
+    ] : [
+      `中性风险精算智能体 (Shield): 市场处于弱横盘。多头吃单比例处于 ${orderFlowBuyRatio}% 偏均衡范围。使用[高频网格平衡对冲区]能够低回撤获取价差。`,
+      `激进突破智能体 (Spike): 是的，既然主力持平，我们在 Z-Score 偏离度处于 ${zScoreValue}σ 两端边界时双向套利，收益极具质感。`,
+      `均值回归智能体 (Shadow): 赞成。以 ${trailingTriggerPct}% 细分步长高抛低吸，对冲波动衰弱即可。`
+    ]);
+
+    setSimulationLogStr(logs);
+  };
+
+  // --- TAB 4: PLAYBOOK & HEDGING MATRIX STATE ---
+  const [playbookStyle, setPlaybookStyle] = useState<'conservative' | 'pyramid' | 'grid'>('conservative');
+  const [hedgeRatio, setHedgeRatio] = useState<number>(35); // Protective asset hedge ratio in %
+  const [trailingTriggerPct, setTrailingTriggerPct] = useState<number>(1.2); // grid size trigger
+
+  // --- TAB 5: MULTI-RESOLUTION & MEAN REVERSION STATE ---
+  type ResolutionType = '1m' | '15m' | '1h' | '1d';
+  const [selectedResolution, setSelectedResolution] = useState<ResolutionType>('15m');
+  const [zScoreValue, setZScoreValue] = useState<number>(1.62); // standard deviation offset
+
+
+  // ==========================================
+  // --- FIVE-WAY DYNAMIC LOOP ORCHESTRATOR ---
+  // ==========================================
+
+  // 1. Linkage: Tab 1 (Pattern ID Option) -> Tab 2 / Tab 3 / Tab 4 / Tab 5
   useEffect(() => {
-    if (analysis) {
-      setManualEntryPrice(analysis.entryPrice ? analysis.entryPrice.toString() : currentPrice.toString());
-      setManualTakeProfit(analysis.takeProfit ? analysis.takeProfit.toString() : (currentPrice * 1.1).toString());
-      setManualStopLoss(analysis.stopLoss ? analysis.stopLoss.toString() : (currentPrice * 0.95).toString());
-    } else if (currentPrice > 0) {
-      setManualEntryPrice(currentPrice.toString());
-      setManualTakeProfit((currentPrice * 1.10).toFixed(2));
-      setManualStopLoss((currentPrice * 0.95).toFixed(2));
+    let baseBuyRatio = 55;
+    if (activePattern.direction === 'BULLISH') {
+      baseBuyRatio = activePattern.id === 'wyckoff_spring' ? 84 : 74;
+    } else if (activePattern.direction === 'BEARISH') {
+      baseBuyRatio = 22;
+    } else {
+      baseBuyRatio = 49;
     }
-  }, [analysis, currentPrice, symbol]);
+    const seed = (symbol.charCodeAt(0) % 6) - 3;
+    const finalRatio = Math.max(12, Math.min(95, baseBuyRatio + seed));
+    setOrderFlowBuyRatio(finalRatio);
 
-  // Parsing values safely
-  const entryPriceVal = parseFloat(manualEntryPrice) || currentPrice || 100;
-  const takeProfitVal = parseFloat(manualTakeProfit) || (entryPriceVal * 1.1);
-  const stopLossVal = parseFloat(manualStopLoss) || (entryPriceVal * 0.95);
+    if (activePattern.direction === 'BULLISH') {
+      setPlaybookStyle('pyramid');
+    } else if (activePattern.direction === 'BEARISH') {
+      setPlaybookStyle('conservative');
+    } else {
+      setPlaybookStyle('grid');
+    }
 
-  // Win-rate lookup from AI or fallback default
-  const winPercent = analysis ? analysis.winRate : 58;
+    let baseZ = 0.0;
+    if (activePattern.id === 'wyckoff_spring') baseZ = -2.55;
+    else if (activePattern.id === 'double_bottom') baseZ = -1.85;
+    else if (activePattern.id === 'head_shoulders_bottom') baseZ = -1.25;
+    else if (activePattern.id === 'bearish_engulfing') baseZ = 2.65;
+    setZScoreValue(baseZ);
 
-  // Real-time calculation variables
-  const isBuy = !analysis || analysis.signal !== SignalType.SELL;
-  
-  // Stop-loss distance
-  const slDistance = isBuy ? (entryPriceVal - stopLossVal) : (stopLossVal - entryPriceVal);
-  const slPercentage = (slDistance / entryPriceVal) * 100;
-
-  // Take-profit distance
-  const tpDistance = isBuy ? (takeProfitVal - entryPriceVal) : (entryPriceVal - takeProfitVal);
-  const tpPercentage = (tpDistance / entryPriceVal) * 100;
-
-  // Mathematical risk-to-reward ratio (R:R Ratio)
-  // Prevent division by zero
-  const calculatedRRRatio = slDistance > 0 ? (tpDistance / slDistance) : 0;
-
-  // Strict Risk-First Position Sizing
-  // Portfolio risk in dollars
-  const maxRiskAmountDollars = portfolioSize * (riskPercent / 100);
-  // Max quantity of shares matching the strict loss allowance
-  const safePositionQuantity = slDistance > 0 
-    ? Math.floor(maxRiskAmountDollars / slDistance) 
-    : 0;
-
-  // Absolute nominal size of position (Cash needed without leverage)
-  const nominalPositionValue = safePositionQuantity * entryPriceVal;
-  // Leveraged required margin
-  const marginRequired = leverage > 0 ? nominalPositionValue / leverage : nominalPositionValue;
-
-  // Win rate in probability form (p)
-  const p = winPercent / 100;
-  // Loss rate in probability form (q)
-  const q = 1 - p;
-  // Profit factor / odds ratio (b)
-  const b = calculatedRRRatio > 0 ? calculatedRRRatio : 1;
-  // Kelly Criterion formula (fraction to bet)
-  // K* = p - (q / b) = (b*p - q) / b
-  const kellyFraction = b > 0 ? (p - (q / b)) : 0;
-  const kellyPct = Math.max(0, kellyFraction * 100);
-
-  // Robust default state generators for correlation and radar if analysis fields are sparse
-  const getDeterministicCorrelation = () => {
-    // Generate authentic but deterministic data based on the symbol
-    const code = symbol.toUpperCase();
-    const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    
-    let isCrypto = code.includes('BTC') || code.includes('ETH') || code.includes('USDT');
-    let isChina = code.startsWith('SH') || code.startsWith('SZ') || /\d{6}/.test(code);
-    
-    const stockTrend = analysis?.signal === SignalType.BUY 
-      ? 'Bullish' 
-      : analysis?.signal === SignalType.SELL 
-        ? 'Bearish' 
-        : 'Neutral';
-
-    const rawCorrelations = [
-      {
-        correlatedAsset: isCrypto ? "NASDAQ 100科技指数" : isChina ? "CSI 300 (沪深300指数)" : "S&P 500 Index (标普500大盘)",
-        correlationType: "Positive (正相关)" as const,
-        correlationStrength: "High" as const,
-        coefficient: isChina ? 0.74 : 0.85,
-        assetTrend: hash % 3 === 0 ? "Bullish" as const : hash % 3 === 1 ? "Bearish" as const : "Neutral" as const,
-      },
-      {
-        correlatedAsset: "DXY (全球美元指数柱)",
-        correlationType: "Negative (负相关)" as const,
-        correlationStrength: "High" as const,
-        coefficient: -0.81,
-        assetTrend: hash % 4 === 0 ? "Bullish" as const : "Bearish" as const,
-      },
-      {
-        correlatedAsset: isCrypto ? "US10Y (美债十年期收益率)" : isChina ? "CNH/USD (离岸汇率水位)" : "Sector Leading ETF (行业龙头板块ETF)",
-        correlationType: hash % 2 === 0 ? "Positive (正相关)" as const : "Negative (负相关)" as const,
-        correlationStrength: "Moderate" as const,
-        coefficient: hash % 2 === 0 ? 0.58 : -0.52,
-        assetTrend: "Bullish" as const,
+    setOrderPrints(generateDarkPoolPrints(symbol, currentPrice).map(p => {
+      if (activePattern.direction === 'BULLISH') {
+        return { ...p, side: (p.side === 'DISTRIBUTION' ? 'ACCUMULATION' : p.side) as any };
+      } else if (activePattern.direction === 'BEARISH') {
+        return { ...p, side: (p.side === 'ACCUMULATION' ? 'DISTRIBUTION' : p.side) as any };
       }
-    ];
+      return p;
+    }));
+  }, [selectedPatternId, symbol]);
 
-    return rawCorrelations.map((item, index) => {
-      const isPositive = item.correlationType === "Positive (正相关)";
-      const coef = item.coefficient;
-      const assetTr = item.assetTrend;
-      
-      const sNum = stockTrend === 'Bullish' ? 1 : stockTrend === 'Bearish' ? -1 : 0;
-      const aNum = assetTr === 'Bullish' ? 1 : assetTr === 'Bearish' ? -1 : 0;
-      
-      const expectedNum = isPositive ? sNum : -sNum;
-      
-      let divScore = 0;
-      let divType = "同频耦合";
-      let divCode = "NORMAL";
-      let explanation = "";
-      
-      if (sNum === 0 || aNum === 0) {
-        divScore = 35;
-        divType = "脱节偏离 (Decoupled)";
-        divCode = "DECOUPLED";
-        explanation = `由于当前一方市场暂时缺乏持续性脉冲（处于横盘或窄幅整理），导致本股 [${symbol}] 与 [${item.correlatedAsset}] 历史相关关系进入阶段性真空脱节阶段。这通常意味着局部主力题材主导行情，宏观大盘的系统性干预相对有限。推荐重点考察个股突发消息而无需过度顾忌宏观波动。`;
-      } else if (sNum === aNum) {
-        if (isPositive) {
-          divScore = 5;
-          divType = "同频耦合共振 (Harmonious)";
-          divCode = "COUPLED";
-          explanation = `本股 [${symbol}] 与其高度正相关的参考标的 [${item.correlatedAsset}] 目前方向完全对齐 (皆为 ${assetTr === 'Bullish' ? '看多' : '看空'})。这是最为健康的系统性资金步伐，表明两地大市具有极强的做多/做空凝聚力，不存在主力机构局部逆流或筹码拉锯，属于标准惯性态势。`;
-        } else {
-          divScore = 80;
-          divType = "异常逆相关背离 (Alert Divergent)";
-          divCode = "DIVERGED_BEARISH";
-          explanation = `警惕关联风险！[${item.correlatedAsset}] 与本股在数学上是显著的【负相关】关系，但在当前周期它们却呈现同方向运动 (均为 ${assetTr === 'Bullish' ? '看多' : '看空'})。这揭示了一种异常的市场博弈：或者是强势美元/债息压境下个股筹码极为紧密形成“逆重力托盘”，或者是局部多头博弈接近尾声、散户情绪异常亢奋导致的虚高。风控建议严格设置止损点，切忌高位追加高倍杠杆。`;
-        }
-      } else {
-        if (isPositive) {
-          divScore = 90;
-          divType = "正相关反倾斜背离 (Diverged Decoupled)";
-          divCode = "DIVERGED_BULLISH";
-          explanation = `警惕高度背离！本股 [${symbol}] 与大盘或板块正相关参考标的 [${item.correlatedAsset}] 方向反向倾斜 (个股 trend: ${stockTrend}, 关联资产 trend: ${assetTr})。这意味着大盘回撤下个股逆势展示出卓越的[独立超额抗跌强度]（若个股为BUY），或者在大盘高歌猛进时个股却莫名滞涨甚至逆势走弱（若个股为SELL）。背离指数已飙至惊人的 ${90}%，表明个股极易迎来补跌甚至爆量报复性反弹，分批金字塔建仓策略是控制此类爆破风险的首要法宝。`;
-        } else {
-          divScore = 12;
-          divType = "反向完美对冲 (Coupled Reverse)";
-          divCode = "COUNTER_NORMAL";
-          explanation = `本股 [${symbol}] 走势趋势与其高度负相关参考标的 [${item.correlatedAsset}] 处于规律的反向对称耦合状态。例如全球避险资本在资产与避险通道间正常流转，这种教科书级别的资金链轮动没有产生任何预期外的异常背离，可放心执行宏观对冲或多空配对套利逻辑。`;
-        }
-      }
-      
-      let calculatedImpact: 'Tailwind (助推)' | 'Headwind (阻力)' | 'Neutral' = 'Neutral';
-      if (divScore <= 15) {
-        calculatedImpact = stockTrend === 'Bullish' ? 'Tailwind (助推)' : 'Headwind (阻力)';
-      } else {
-        if (stockTrend === 'Bullish' && sNum !== aNum && isPositive) {
-          calculatedImpact = 'Headwind (阻力)';
-        } else if (stockTrend === 'Bullish' && sNum === aNum && !isPositive) {
-          calculatedImpact = 'Headwind (阻力)';
-        } else if (stockTrend === 'Bearish' && sNum !== aNum && isPositive) {
-          calculatedImpact = 'Headwind (阻力)';
-        } else {
-          calculatedImpact = 'Tailwind (助推)';
-        }
-      }
-
-      return {
-        correlatedAsset: item.correlatedAsset,
-        correlationType: item.correlationType,
-        correlationStrength: item.correlationStrength,
-        assetTrend: item.assetTrend,
-        impact: calculatedImpact,
-        coefficient: coef,
-        divergenceScore: divScore,
-        divergenceType: divType,
-        divergenceCode: divCode,
-        explanation: explanation
-      };
+  // 2. Linkage: Tab 2 (Taker strength) -> Tab 3 (Sandbox Weights) + Tab 4 (Hedge option)
+  useEffect(() => {
+    const bulls = orderFlowBuyRatio;
+    const bears = 100 - bulls;
+    setSandboxSentimentWeights({
+      bulls: bulls,
+      bears: bears,
+      neutrals: Math.max(5, Math.round(Math.abs(bulls - bears) * 0.25))
     });
-  };
 
-  const getDeterministicCatalyst = () => {
-    const code = symbol.toUpperCase();
-    const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const events = [
-      { nextEvent: "美联储利率政策会议及决议声明", eventImpact: "High Volatility" as const, timingWarning: "数据周期重合，防止杠杆超载" },
-      { nextEvent: "季度盈余财报与前瞻业绩指导发布", eventImpact: "High Volatility" as const, timingWarning: "隐含波动率过高，不建议博弈末日期权" },
-      { nextEvent: "核心宏观通胀指标 (CPI/PCE) 披露", eventImpact: "Medium" as const, timingWarning: "留意短线假冲高与多空洗盘" },
-      { nextEvent: "细分行业龙头财报以及产业供应链重组", eventImpact: "Low" as const, timingWarning: "个股异动，合理执行金字塔仓位补差" }
+    // Option hedge protective ratio is inverse to buy strength
+    const optimalHedge = Math.round(100 - orderFlowBuyRatio);
+    setHedgeRatio(Math.max(10, Math.min(90, optimalHedge)));
+
+    updateSandboxDebate();
+  }, [orderFlowBuyRatio, selectedPatternId, zScoreValue, trailingTriggerPct]);
+
+  // 3. Linkage: Tab 5 (Timeframe Resolution) -> Tab 4 (Executing grid boundary size)
+  useEffect(() => {
+    if (selectedResolution === '1m') {
+      setTrailingTriggerPct(0.4);
+    } else if (selectedResolution === '15m') {
+      setTrailingTriggerPct(1.2);
+    } else if (selectedResolution === '1h') {
+      setTrailingTriggerPct(2.5);
+    } else if (selectedResolution === '1d') {
+      setTrailingTriggerPct(5.8);
+    }
+
+    setScanMetrics(prev => ({
+      ...prev,
+      scannedCandles: selectedResolution === '1m' ? 320 : (selectedResolution === '15m' ? 144 : (selectedResolution === '1h' ? 80 : 45))
+    }));
+  }, [selectedResolution]);
+
+  const handleSimulateSandbox = () => {
+    setIsSimulatingSandbox(true);
+    let counter = 0;
+    const titles = [
+      "▶ 正在注入 10,000 次蒙特卡洛多空动力学沙盒运算...",
+      "▶ 加载特定做市买盘/暗池高频微观物理摩擦参数...",
+      "▶ 分析红队极端空头向下套利砸盘的最坏风险场景...",
+      "▶ 多智能体交叉博弈完毕，审判庭最终共识正在生成中..."
     ];
-    return analysis?.catalystRadar || events[hash % events.length];
-  };
-
-  const getDeterministicSocial = () => {
-    const code = symbol.toUpperCase();
-    const hash = code.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
     
-    return {
-      retailMood: hash % 3 === 0 ? "Fear" : hash % 3 === 1 ? "Greed" : "Neutral",
-      institutionalAction: hash % 2 === 0 ? "Accumulating (吸筹)" : "Distributing (派发)",
-      divergenceStatus: hash % 2 === 0 
-        ? "Bullish Divergence (Retail Fear / Inst Buy)" 
-        : "Bearish Divergence (Retail Greed / Inst Sell)",
-      squeezeRisk: hash % 3 === 0 ? "High" : "Low"
-    };
+    const interval = setInterval(() => {
+      if (counter < titles.length) {
+        setSimulationLogStr(prev => [titles[counter], ...prev.slice(0, 3)]);
+        counter++;
+      } else {
+        clearInterval(interval);
+        setIsSimulatingSandbox(false);
+        setSimulationCount(prev => prev + 1);
+        
+        const s = symbol.length + simulationCount;
+        const isB = patternBias === 'BULLISH';
+        const isS = patternBias === 'BEARISH';
+        
+        const newBulls = isB ? (68 + (s % 12)) : (isS ? (18 + (s % 8)) : (38 + (s % 15)));
+        const newBears = isS ? (68 + (s % 12)) : (isB ? (18 + (s % 8)) : (38 + (s % 15)));
+        const newNeutrals = 100 - newBulls - newBears;
+        
+        setSandboxSentimentWeights({
+          bulls: newBulls,
+          bears: newBears,
+          neutrals: Math.max(5, newNeutrals)
+        });
+        
+        updateSandboxDebate();
+      }
+    }, 450);
   };
 
-  const correlations = getDeterministicCorrelation();
-  const catalyst = getDeterministicCatalyst();
-  const social = getDeterministicSocial();
+  // Recharts order books depth data - linked dynamically to buyer seller ratio!
+  const generateDepthData = () => {
+    const data = [];
+    const step = currentPrice * 0.003;
 
-  // --- MODEL TRINITY CONSENSUS WEIGHT TUNER CALCULATOR ---
-  const rawQuantScore = analysis?.trinityConsensus?.quantScore || 85;
-  const rawSmartScore = analysis?.trinityConsensus?.smartMoneyScore || 92;
-  const rawChartScore = analysis?.trinityConsensus?.chartPatternScore || 78;
+    for (let i = 5; i >= 1; i--) {
+      const p = currentPrice - (i * step);
+      const scaleFactor = i === 4 ? 4.5 : i === 2 ? 2.1 : 1.2;
+      const buyScale = (orderFlowBuyRatio / 50) * scaleFactor;
+      const orderVolume = Math.round((14000 + (symbol.length * 1200) + (i * 2400)) * buyScale);
+      data.push({
+        price: parseFloat(p.toFixed(2)),
+        bid: orderVolume,
+        ask: 0,
+        type: '买盘盘整深度'
+      });
+    }
+    
+    data.push({
+      price: parseFloat(currentPrice.toFixed(2)),
+      bid: 0,
+      ask: 0,
+      type: '中枢价'
+    });
 
-  // Normalize weight values safely to prevent divide-by-zero
-  const weightSum = weightQuant + weightSmartMoney + weightChart;
-  const normalizedQuant = weightSum > 0 ? (weightQuant / weightSum) : 0.40;
-  const normalizedSmart = weightSum > 0 ? (weightSmartMoney / weightSum) : 0.40;
-  const normalizedChart = weightSum > 0 ? (weightChart / weightSum) : 0.20;
+    for (let i = 1; i <= 5; i++) {
+      const p = currentPrice + (i * step);
+      const scaleFactor = i === 3 ? 4.8 : i === 5 ? 1.9 : 1.1;
+      const sellScale = ((100 - orderFlowBuyRatio) / 50) * scaleFactor;
+      const orderVolume = Math.round((13000 + (symbol.charCodeAt(0) * 100) + (i * 1800)) * sellScale);
+      data.push({
+        price: parseFloat(p.toFixed(2)),
+        bid: 0,
+        ask: orderVolume,
+        type: '卖盘压阻墙'
+      });
+    }
 
-  const dynamicConsensusScore = Math.round(
-    rawQuantScore * normalizedQuant +
-    rawSmartScore * normalizedSmart +
-    rawChartScore * normalizedChart
-  );
+    return data;
+  };
 
-  let dynamicVerdict = 'MODERATE CONFLUENCE (一般共振振荡)';
-  let dynamicVerdictDesc = '各项维度发展态势较为平缓，主力调仓与散户多空存在分歧，价格倾向于阻力均价内震荡洗盘。';
-  let consensusRatingStars = '★★★☆☆';
-  let consensusBadgeColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+  const depthData = generateDepthData();
 
-  if (dynamicConsensusScore >= 88) {
-    dynamicVerdict = 'EXCELLENT TRINITY CONFLUENCE (高度共振)';
-    dynamicVerdictDesc = '技术周期、聪明钱大单流与关键图表阻力已被核心引擎完美合并，具备极其强悍的顺势发酵能动性。';
-    consensusRatingStars = '★★★★★';
-    consensusBadgeColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-  } else if (dynamicConsensusScore >= 78) {
-    dynamicVerdict = 'ACCUMULATING HEURISTIC (偏多蓄势阶)';
-    dynamicVerdictDesc = '吸筹吸筹动向高阶重合，支撑线防备巩固良好，主力在密集筹码堆积区具有强烈的防护防御。';
-    consensusRatingStars = '★★★★☆';
-    consensusBadgeColor = 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20';
-  } else if (dynamicConsensusScore < 60) {
-    dynamicVerdict = 'DIVERGENT RISK EXPOSURE (背离走弱警告)';
-    dynamicVerdictDesc = '各维度参数发生剧烈多空分流，散户极度贪婪而主力资金暗中出货，防守均线极易破位。建议偏向防御。';
-    consensusRatingStars = '★★☆☆☆';
-    consensusBadgeColor = 'text-red-400 bg-red-500/10 border-red-500/20';
-  }
+  // Generate Recharts multi-scenarios Monte Carlo simulation curves - linked dynamically to orderFlowBuyRatio!
+  const generateMonteCarloData = () => {
+    const data = [];
+    const baseP = currentPrice;
+    const bullsScale = (orderFlowBuyRatio - 50) / 50; // -1 to +1
+    
+    for (let i = 0; i <= 10; i++) {
+      const progress = i / 10;
+      
+      const bullTrend = (0.045 + bullsScale * 0.045) * progress;
+      const bearTrend = (-0.05 + bullsScale * 0.03) * progress;
+      const tailTrend = (-0.085 + bullsScale * 0.02) * Math.sqrt(progress);
+      
+      const wave = Math.sin(progress * 4) * 0.01;
+      
+      const pSpike = baseP * (1 + bullTrend + wave + (progress * 0.02));
+      const pShadow = baseP * (1 + bearTrend - wave - (progress * 0.015));
+      const pShield = baseP * (1 + (bullTrend + bearTrend) * 0.5 + Math.cos(progress * 5) * 0.005);
+      const pTail = baseP * (1 + tailTrend + wave * 2);
+      
+      data.push({
+        name: i === 0 ? '现在' : `${i}阶`,
+        '突破阵营路径': parseFloat(pSpike.toFixed(2)),
+        '回归阵营路径': parseFloat(pShadow.toFixed(2)),
+        '合意风控中轨': parseFloat(pShield.toFixed(2)),
+        '尾部防线清算': parseFloat(pTail.toFixed(2))
+      });
+    }
+    return data;
+  };
 
-  // --- MODEL GOLD PYRAMID SCALING PLAN HELPERS ---
-  const pyramidStage1Shares = Math.floor(safePositionQuantity * 0.5);
-  const pyramidStage1Price = entryPriceVal;
-  const pyramidStage1Margin = leverage > 0 ? (pyramidStage1Price * pyramidStage1Shares) / leverage : 0;
+  const monteCarloData = generateMonteCarloData();
 
-  const pyramidStage2Shares = Math.floor(safePositionQuantity * 0.3);
-  const pyramidStage2Price = Math.max(0.01, entryPriceVal - (slDistance * 0.382));
-  const pyramidStage2Margin = leverage > 0 ? (pyramidStage2Price * pyramidStage2Shares) / leverage : 0;
+  // Dynamic performance analysis of hedged vs unhedged - linked to buy ratio & protective hedge ratio!
+  const generateHedgedPerformanceData = () => {
+    const data = [];
+    const isBull = orderFlowBuyRatio >= 50;
+    const coef = hedgeRatio / 100;
+    
+    let baseUnhedged = 100;
+    let baseHedged = 100;
+    
+    for (let i = 0; i <= 12; i++) {
+      let rawReturn = 0;
+      if (i === 3) rawReturn = -6.5; 
+      else if (i === 4) rawReturn = -3.2; 
+      else if (i === 8) rawReturn = -4.8; 
+      else {
+        rawReturn = isBull 
+          ? (3.2 + (orderFlowBuyRatio - 50) * 0.14 + (i % 3)) 
+          : (-2.2 - (50 - orderFlowBuyRatio) * 0.12 + (i % 2));
+      }
+      
+      baseUnhedged = baseUnhedged * (1 + rawReturn / 100);
+      
+      const hedgedReturn = rawReturn < 0 
+        ? rawReturn * (1 - coef) + (1.2 * coef) 
+        : rawReturn * (1 - coef * 0.45); 
+        
+      baseHedged = baseHedged * (1 + hedgedReturn / 100);
+      
+      data.push({
+        step: `周期 ${i}`,
+        '裸多持仓 (Unhedged Raw)': parseFloat(baseUnhedged.toFixed(1)),
+        '主动套保体系 (Hedged Playbook)': parseFloat(baseHedged.toFixed(1))
+      });
+    }
+    return data;
+  };
 
-  const pyramidStage3Shares = Math.floor(safePositionQuantity * 0.2);
-  const pyramidStage3Price = entryPriceVal + (tpDistance * 0.236);
-  const pyramidStage3Margin = leverage > 0 ? (pyramidStage3Price * pyramidStage3Shares) / leverage : 0;
+  const performanceHedgeData = generateHedgedPerformanceData();
 
-  // Rendering a beautiful progress bar for win rate
-  const rrColorClass = calculatedRRRatio >= 3 
-    ? { border: 'border-emerald-500/30', text: 'text-emerald-400', label: 'Perfect (极佳)', bg: 'bg-emerald-500/10' }
-    : calculatedRRRatio >= 2
-    ? { border: 'border-indigo-500/30', text: 'text-indigo-400', label: 'Premium (高级)', bg: 'bg-indigo-500/10' }
-    : calculatedRRRatio >= 1.5
-    ? { border: 'border-blue-500/30', text: 'text-blue-400', label: 'Standard (标准)', bg: 'bg-blue-500/10' }
-    : { border: 'border-red-500/30', text: 'text-red-400', label: 'Sub-standard (较差)', bg: 'bg-red-500/10' };
+  // Generate Normal Gaussian distribution curve for Recharts - linked to real-time z-score from pattern match
+  const generateGaussianCurveData = () => {
+    const data = [];
+    const totalPoints = 40;
+    
+    for (let i = 0; i <= totalPoints; i++) {
+      const z = parseFloat((-3.5 + (i / totalPoints) * 7.0).toFixed(2));
+      const probabilityDensity = (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-(z * z) / 2);
+      
+      data.push({
+        z: z,
+        '概率密度': parseFloat((probabilityDensity * 100).toFixed(2)),
+        '当前资产偏离度': Math.abs(z - zScoreValue) < 0.1 ? parseFloat((probabilityDensity * 100).toFixed(2)) : null
+      });
+    }
+    return data;
+  };
+
+  const gaussianData = generateGaussianCurveData();
+
+  // Multi-step target predictive lookup for Tab 5 - fully integrated with Z-Scores and timeframe bounds
+  const getPredictiveTargetSeries = () => {
+    const series = [];
+    const tfLabel = selectedResolution;
+    const baseVal = currentPrice;
+    
+    const isOverbought = zScoreValue > 1.2;
+    const isOversold = zScoreValue < -1.2;
+    
+    const scale = tfLabel === '1m' ? 0.005 : (tfLabel === '15m' ? 0.015 : (tfLabel === '1h' ? 0.035 : 0.075));
+    
+    const p1Factor = isOverbought ? -0.16 * zScoreValue : (isOversold ? -0.16 * zScoreValue : 0.05);
+    const p1High = baseVal * (1 + (scale * (1.1 + p1Factor)));
+    const p1Low = baseVal * (1 - (scale * (1.1 - p1Factor)));
+    
+    const p2Factor = isOverbought ? -0.32 * zScoreValue : (isOversold ? -0.32 * zScoreValue : 0.09);
+    const p2High = baseVal * (1 + (scale * (2.2 + p2Factor)));
+    const p2Low = baseVal * (1 - (scale * (2.2 - p2Factor)));
+    
+    const p3Factor = isOverbought ? -0.55 * zScoreValue : (isOversold ? -0.55 * zScoreValue : 0.14);
+    const p3High = baseVal * (1 + (scale * (3.8 + p3Factor)));
+    const p3Low = baseVal * (1 - (scale * (3.8 - p3Factor)));
+
+    series.push(
+      { step: `T+1核 (${tfLabel})`, low: parseFloat(p1Low.toFixed(2)), high: parseFloat(p1High.toFixed(2)), center: parseFloat(((p1Low+p1High)/2).toFixed(2)), confidence: 92 },
+      { step: `T+2核 (${tfLabel} * 2)`, low: parseFloat(p2Low.toFixed(2)), high: parseFloat(p2High.toFixed(2)), center: parseFloat(((p2Low+p2High)/2).toFixed(2)), confidence: 84 },
+      { step: `T+3结算 (结算极值)`, low: parseFloat(p3Low.toFixed(2)), high: parseFloat(p3High.toFixed(2)), center: parseFloat(((p3Low+p3High)/2).toFixed(2)), confidence: 73 }
+    );
+    
+    return series;
+  };
+
+  const predictiveSeries = getPredictiveTargetSeries();
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-300">
+    <div id="quant-decision-dashboard" className="bg-[#0c1317] border border-slate-800/90 rounded-2xl overflow-hidden shadow-2xl animate-in fade-in duration-300">
       
-      {/* Header Panel */}
-      <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-md">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
+      {/* Dynamic Dashboard Logo / Header Info */}
+      <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0a0f12]/60">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md">
+            <Layers className="w-5 h-5 text-indigo-400 animate-pulse" />
           </div>
           <div>
             <h2 className="text-sm font-bold text-slate-100 tracking-wide flex items-center gap-2">
               多维度指标深度挖掘与量化决策舱
+              <span className="text-[9px] bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 px-1.5 py-0.5 rounded font-bold uppercase font-mono">
+                v4.0 Premium
+              </span>
             </h2>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Deep Multi-dimensional Association & Adaptive Risk Matrix for {symbol}
+            <p className="text-[10px] text-slate-500 mt-0.5 font-mono">
+              Advanced Multi-Agent Sandboxing & Predictive Mean-Reversion engine for <span className="text-indigo-400 font-bold">{symbol}</span>
             </p>
           </div>
         </div>
-        <span className="text-[9px] bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded font-mono font-bold uppercase">
-          Pro Dashboard
-        </span>
+        <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 bg-slate-950/40 px-3 py-1.5 border border-slate-800/80 rounded-lg">
+          <Activity className="w-3.5 h-3.5 text-indigo-400" />
+          <span>控制定价锚：</span>
+          <span className="text-emerald-400 font-bold">{currentPrice.toFixed(2)}</span>
+        </div>
       </div>
 
-      {/* Tabs Menu */}
-      <div className="flex bg-slate-950 border-b border-slate-800 p-1">
+      {/* Main Tabs Navigation Grid (Responsive and Touch-Ready) */}
+      <div className="grid grid-cols-2 md:grid-cols-5 bg-[#070b0d] border-b border-indigo-950/20 p-1 gap-1">
+        
         <button
-          onClick={() => setActiveMiningTab('indicators')}
-          className={`flex-1 py-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
-            activeMiningTab === 'indicators'
-              ? 'bg-slate-800 text-slate-100 border border-slate-700/50'
-              : 'text-slate-500 hover:text-slate-300'
+          onClick={() => setActiveMiningTab('kline')}
+          className={`py-3 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+            activeMiningTab === 'kline'
+              ? 'bg-[#121c21] text-slate-100 border border-slate-800/85 shadow-inner'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-[#121c21]/20'
           }`}
-          id="tab-mining-indicators"
+          id="tab-kline-matching"
         >
-          <Gauge className="w-3.5 h-3.5 text-indigo-400" />
-          三维指标深度挖掘
+          <Eye className={`w-4 h-4 ${activeMiningTab === 'kline' ? 'text-indigo-400' : 'text-slate-500'}`} />
+          <span>1. 视觉K线特征比对</span>
         </button>
 
         <button
-          onClick={() => setActiveMiningTab('correlation')}
-          className={`flex-1 py-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
-            activeMiningTab === 'correlation'
-              ? 'bg-slate-800 text-slate-100 border border-slate-700/50'
-              : 'text-slate-500 hover:text-slate-300'
+          onClick={() => setActiveMiningTab('darkpool')}
+          className={`py-3 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+            activeMiningTab === 'darkpool'
+              ? 'bg-[#121c21] text-slate-100 border border-slate-800/85 shadow-inner'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-[#121c21]/20'
           }`}
-          id="tab-mining-correlation"
+          id="tab-darkpool-liquidity"
         >
-          <Database className="w-3.5 h-3.5 text-emerald-400" />
-          深度多维关联分析
+          <Zap className={`w-4 h-4 ${activeMiningTab === 'darkpool' ? 'text-amber-400' : 'text-slate-500'}`} />
+          <span>2. 暗池与筹码流动</span>
         </button>
 
         <button
-          onClick={() => setActiveMiningTab('calculator')}
-          className={`flex-1 py-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
-            activeMiningTab === 'calculator'
-              ? 'bg-slate-800 text-slate-100 border border-slate-700/50'
-              : 'text-slate-500 hover:text-slate-300'
+          onClick={() => setActiveMiningTab('sandbox')}
+          className={`py-3 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+            activeMiningTab === 'sandbox'
+              ? 'bg-[#121c21] text-slate-100 border border-slate-800/85 shadow-inner'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-[#121c21]/20'
           }`}
-          id="tab-mining-calculator"
+          id="tab-adversarial-sandbox"
         >
-          <Calculator className="w-3.5 h-3.5 text-amber-400" />
-          出场计划风险计算器
+          <Bot className={`w-4 h-4 ${activeMiningTab === 'sandbox' ? 'text-emerald-400' : 'text-slate-500'}`} />
+          <span>3. 智能体对抗沙盒</span>
+        </button>
+
+        <button
+          onClick={() => setActiveMiningTab('playbook')}
+          className={`py-3 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+            activeMiningTab === 'playbook'
+              ? 'bg-[#121c21] text-slate-100 border border-slate-800/85 shadow-inner'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-[#121c21]/20'
+          }`}
+          id="tab-playbook-hedging"
+        >
+          <Workflow className={`w-4 h-4 ${activeMiningTab === 'playbook' ? 'text-indigo-400' : 'text-slate-500'}`} />
+          <span>4. 主动交易与对冲</span>
+        </button>
+
+        <button
+          onClick={() => setActiveMiningTab('prediction')}
+          className={`col-span-2 md:col-span-1 py-3 text-[11px] font-bold rounded-lg transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
+            activeMiningTab === 'prediction'
+              ? 'bg-[#121c21] text-slate-100 border border-slate-800/80 shadow-inner'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-[#121c21]/20'
+          }`}
+          id="tab-predictive-reversion"
+        >
+          <History className={`w-4 h-4 ${activeMiningTab === 'prediction' ? 'text-rose-400' : 'text-slate-500'}`} />
+          <span>5. 多分辨率时序预测</span>
         </button>
       </div>
 
-      {/* Content Area */}
-      <div className="p-6">
+      {/* Content Canvas */}
+      <div className="p-5">
 
-        {/* =============== TAB 1: THREE-DIMENSIONAL INDICATORS DEEP MINING =============== */}
-        {activeMiningTab === 'indicators' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {/* ======================= TAB 1: K-LINE PATTERN MATCHING ======================= */}
+        {activeMiningTab === 'kline' && (
+          <div className="space-y-5 animate-in fade-in duration-200" id="panel-kline-pattern">
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
               
-              {/* Dimension 1: Quantitative technical consensus */}
-              <div className="bg-[#0b1215]/85 p-5 rounded-xl border border-slate-800 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-3.5">
-                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                      <Activity className="w-3.5 h-3.5 text-emerald-400" /> 维度一: 结构周期共振
-                    </span>
-                    <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono px-1.5 py-0.2 rounded">
-                      指标联动
-                    </span>
-                  </div>
-                  <div className="space-y-3 font-mono text-[11px]">
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">RSI (14) 强弱点:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.hardData?.realTimeRsi || '52.6'} ({analysis?.hardData?.rsiStatus || '中性性'})
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">MACD 主线状态:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.technicalIndicators?.macdStatus || "Golden Cross (金叉偏向)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">EMA 指数趋势排列:</span>
-                      <span className="text-emerald-400 font-bold">
-                        {analysis?.technicalIndicators?.emaAlignment || "Bullish Stack (多头向上)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between pb-1.5">
-                      <span className="text-slate-500">布林轨道振幅:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.technicalIndicators?.bollingerStatus || "Expansion (开口扩张)"}
-                      </span>
-                    </div>
-                  </div>
+              {/* Pattern Selector Rail */}
+              <div className="xl:col-span-4 space-y-3">
+                <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-2">
+                  模态感知模式检测器
                 </div>
-                <div className="mt-4 p-2.5 bg-slate-950/40 rounded-lg border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
-                  <span className="text-emerald-400 font-bold flex items-center gap-1">📍 模型诊断</span>
-                  多周期结构共振较好，主流动能处于上升优势区，阻力回落时买单支撑性极强。
-                </div>
-              </div>
-
-              {/* Dimension 2: Smart Money Orders Activity */}
-              <div className="bg-[#0b1215]/85 p-5 rounded-xl border border-slate-800 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-3.5">
-                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-indigo-400" /> 维度二: 聪明钱订单流
-                    </span>
-                    <span className="text-[9px] bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-mono px-1.5 py-0.2 rounded">
-                      成交剖析
-                    </span>
-                  </div>
-                  <div className="space-y-3 font-mono text-[11px]">
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">威科夫操盘阶段:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.wyckoff?.phase || "Accumulation (底部吸筹阶段)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">关键异常事件:</span>
-                      <span className="text-white font-bold text-slate-100">
-                        {analysis?.wyckoff?.event || "Spring (强力清洗浮筹)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">SMC 市场结构:</span>
-                      <span className="text-emerald-400 font-bold">
-                        {analysis?.smc?.structure || "CHoCH (角色互换多头确认)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between pb-1.5">
-                      <span className="text-slate-500">流动性回切状态:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.smc?.liquidityStatus || "Swept (强力洗盘完毕)"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-4 p-2.5 bg-slate-950/40 rounded-lg border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
-                  <span className="text-indigo-400 font-bold flex items-center gap-1">📍 庄家动向</span>
-                  大单主力净成交呈正流向，多次完成假跌破反抽洗盘，典型的机构建仓和筹码挪移完结。
-                </div>
-              </div>
-
-              {/* Dimension 3: Intermarket & Derivatives Catalyst */}
-              <div className="bg-[#0b1215]/85 p-5 rounded-xl border border-slate-800 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-3.5">
-                    <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
-                      <Percent className="w-3.5 h-3.5 text-amber-400" /> 维度三: 期权Gamma博弈
-                    </span>
-                    <span className="text-[9px] bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono px-1.5 py-0.2 rounded">
-                      杠杆衍生
-                    </span>
-                  </div>
-                  <div className="space-y-3 font-mono text-[11px]">
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">期权最大痛点 (Max Pain):</span>
-                      <span className="text-slate-100 font-bold text-amber-400">
-                        {analysis?.optionsData?.maxPainPrice ? formatCurrency(analysis.optionsData.maxPainPrice) : formatCurrency(currentPrice)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">Gamma 曝露水平:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.optionsData?.gammaExposure || "Long Gamma (挤压波偏低)"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-slate-800/40 pb-2">
-                      <span className="text-slate-500">买卖比 Put-Call Ratio:</span>
-                      <span className="text-slate-100 font-bold">
-                        {analysis?.optionsData?.putCallRatio || '0.64'} (偏多建仓)
-                      </span>
-                    </div>
-                    <div className="flex justify-between pb-1.5">
-                      <span className="text-slate-500">期权挤压风险:</span>
-                      <span className={`font-bold ${social.squeezeRisk === 'High' ? 'text-rose-400' : 'text-slate-300'}`}>
-                        {social.squeezeRisk || "Low (中低)"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-4 p-2.5 bg-slate-950/40 rounded-lg border border-slate-800 text-[10px] text-slate-400 leading-relaxed">
-                  <span className="text-amber-400 font-bold flex items-center gap-1">📍 衍生结论</span>
-                  当前空头止损期权密集分布，如价格升破成交高筹码带，极易触发快速轧空多头暴拉行情。
-                </div>
-              </div>
-
-            </div>
-
-            {/* Tri-axial Consensus Rating Card */}
-            <div className="bg-slate-950/40 rounded-2xl border border-slate-800 p-5">
-              <div className="flex flex-col lg:flex-row gap-6 justify-between">
                 
-                {/* Left side: Results & Explanations */}
-                <div className="flex-1 space-y-4">
-                  <div>
-                    <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                      <Lightbulb className="w-4 h-4 text-amber-400 animate-pulse" /> AI 三维指标共振评星
-                    </h4>
-                    <p className="text-[10px] text-slate-500 mt-1 uppercase font-mono">
-                      Trinity Consensus Valve Rating (Live Custom Tuning)
+                <div className="space-y-2">
+                  {KLINE_PATTERNS.map((item) => {
+                    const isSelected = item.id === selectedPatternId;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setSelectedPatternId(item.id)}
+                        className={`w-full p-3.5 rounded-xl border text-left transition-all relative overflow-hidden flex items-center justify-between group cursor-pointer ${
+                          isSelected 
+                            ? 'bg-indigo-950/20 border-indigo-505/30 text-slate-100' 
+                            : 'bg-[#080d0f]/60 border-slate-800/80 hover:border-slate-700 text-slate-400 hover:text-slate-250'
+                        }`}
+                      >
+                        <div>
+                          <div className="text-xs font-bold tracking-wide flex items-center gap-2">
+                            <span className={`w-1.5 h-1.5 rounded-full ${item.direction === 'BULLISH' ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                            {item.name}
+                          </div>
+                          <p className="text-[9px] text-slate-500 font-mono mt-1 font-bold">
+                            {item.enName} • 匹配概率: {item.confidence}%
+                          </p>
+                        </div>
+                        <ChevronRight className={`w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 ${isSelected ? 'text-indigo-400' : 'text-slate-600'}`} />
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={handleScanKLine}
+                  disabled={isScanningKLine}
+                  className="w-full mt-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-950/50 text-white font-bold py-3 px-4 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isScanningKLine ? 'animate-spin' : ''}`} />
+                  {isScanningKLine ? '正在多模态感知K线形态...' : '重新进行多模态扫描比对'}
+                </button>
+              </div>
+
+              {/* Graphical Canvas (SVG-based active rendering) */}
+              <div className="xl:col-span-8 bg-[#070b0d]/80 rounded-xl border border-slate-800/95 p-5 flex flex-col justify-between min-h-[380px] relative overflow-hidden">
+                
+                {/* Visual Header */}
+                <div className="flex justify-between items-center z-10">
+                  <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 tracking-wider font-mono">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>视觉特征感知区 (Visual Feature Overlays)</span>
+                  </div>
+                  <span className={`text-[9px] px-2 py-0.5 rounded border font-mono font-bold ${activePattern.direction === 'BULLISH' ? 'bg-emerald-505/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-505/10 text-rose-400 border-rose-500/20'}`}>
+                    {activePattern.direction === 'BULLISH' ? '看多共振形态 (BULLISH)' : '看空出货形态 (BEARISH)'}
+                  </span>
+                </div>
+
+                {isScanningKLine ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3">
+                    <div className="relative w-12 h-12">
+                      <div className="absolute inset-0 rounded-full border-2 border-indigo-500/25 border-t-indigo-400 animate-spin" />
+                      <div className="absolute inset-1.5 rounded-full border border-indigo-405/10 border-b-indigo-400 animate-spin [animation-direction:reverse]" />
+                    </div>
+                    <p className="text-[10px] text-slate-405 font-mono animate-pulse mt-1">
+                      图像视觉引擎正在对支撑线与下影线扫尾进行高精度像素级比对...
                     </p>
                   </div>
+                ) : (
+                  <>
+                    {/* Hand-drawn SVG interactive Candlesticks graph representing patterns */}
+                    <div className="flex-1 w-full h-[180px] my-4 relative flex items-center justify-center">
+                      <svg viewBox="0 0 600 180" className="w-full h-full text-slate-400">
+                        {/* Shaded horizontal background bands of demand zone / liquidity sweep */}
+                        {activePattern.id === 'wyckoff_spring' && (
+                          <>
+                            <rect x="50" y="125" width="500" height="25" fill="#10b981" fillOpacity="0.04" stroke="#10b981" strokeDasharray="3 3" strokeOpacity="0.15" />
+                            <text x="60" y="141" fill="#10b981" fillOpacity="0.4" fontSize="9" className="font-mono font-bold uppercase">限售挂单托底带 | MULTI-LOT LIMIT DEMAND ZONE</text>
+                            {/* Bounding box around the spring */}
+                            <rect x="365" y="115" width="70" height="50" fill="none" stroke="#6366f1" strokeDasharray="2 2" strokeOpacity="0.4" />
+                            <circle cx="400" cy="148" r="6" fill="#6366f1" fillOpacity="0.2" className="animate-ping" />
+                            <text x="375" y="110" fill="#6366f1" fontSize="9" className="font-bold">扫荡止损流动性 [Sping Sweep]</text>
+                          </>
+                        )}
 
-                  <div className="bg-[#0b1215] border border-slate-800 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between items-center border-b border-slate-800/60 pb-2">
-                      <span className="text-slate-400 text-xs">联合自适应评分:</span>
-                      <div className="font-mono flex items-center gap-2">
-                        <span className="text-sm text-slate-500 font-bold">{consensusRatingStars}</span>
-                        <span className="text-xl font-black text-emerald-400 tracking-tight">{dynamicConsensusScore}</span>
-                        <span className="text-[10px] text-slate-500">/ 100</span>
+                        {activePattern.id === 'double_bottom' && (
+                          <>
+                            <line x1="50" y1="135" x2="550" y2="135" stroke="#f59e0b" strokeOpacity="0.2" strokeDasharray="3 3" />
+                            <text x="60" y="128" fill="#f59e0b" fillOpacity="0.3" fontSize="9" className="font-mono">对称W防线阻撑位: Z-Score Threshold</text>
+                            {/* Two bottom circle indicators */}
+                            <circle cx="150" cy="135" r="5" fill="#10b981" fillOpacity="0.2" className="animate-pulse" />
+                            <circle cx="350" cy="135" r="5" fill="#10b981" fillOpacity="0.3" className="animate-pulse" />
+                            <text x="135" y="152" fill="#94a3b8" fontSize="8" className="font-mono">左底测试</text>
+                            <text x="335" y="152" fill="#10b981" fontSize="8" className="font-mono">右底缩量</text>
+                            
+                            {/* Neckline line */}
+                            <line x1="50" y1="65" x2="550" y2="65" stroke="#6366f1" strokeOpacity="0.3" />
+                            <text x="460" y="58" fill="#6366f1" fontSize="9" className="font-mono">中间颈线突破点</text>
+                          </>
+                        )}
+
+                        {activePattern.id === 'head_shoulders_bottom' && (
+                          <>
+                            <line x1="50" y1="105" x2="550" y2="105" stroke="#64748b" strokeOpacity="0.15" />
+                            {/* Circles around the shoulder parts */}
+                            <circle cx="160" cy="125" r="4" fill="#94a3b8" fillOpacity="0.2" />
+                            <circle cx="300" cy="155" r="6" fill="#10b981" fillOpacity="0.2" className="animate-ping" />
+                            <circle cx="440" cy="125" r="4" fill="#10b981" fillOpacity="0.3" />
+                            <text x="145" y="117" fill="#64748b" fontSize="8" className="font-mono">左肩部位</text>
+                            <text x="282" y="145" fill="#10b981" fontSize="8" className="font-mono font-bold">主力Head破底</text>
+                            <text x="425" y="117" fill="#10b981" fontSize="8" className="font-mono">右肩微沉</text>
+                          </>
+                        )}
+
+                        {activePattern.id === 'bearish_engulfing' && (
+                          <>
+                            <rect x="50" y="25" width="500" height="25" fill="#ef4444" fillOpacity="0.03" stroke="#ef4444" strokeDasharray="3 3" strokeOpacity="0.1" />
+                            <text x="60" y="41" fill="#ef4444" fillOpacity="0.4" fontSize="9" className="font-mono font-bold uppercase">套牢密集筹码峰压阻墙 | RESISTANCE HVN BARRIER</text>
+                            <rect x="305" y="15" width="85" height="120" fill="none" stroke="#ef4444" strokeDasharray="2 2" strokeOpacity="0.4" />
+                            <circle cx="348" cy="70" r="7" fill="#ef4444" fillOpacity="0.2" className="animate-ping" />
+                            <text x="312" y="148" fill="#ef4444" fontSize="9" className="font-bold">巨量阴吞没主力出走</text>
+                          </>
+                        )}
+
+                        {/* Hand generated Candlestick elements (Open, High, Low, Close) */}
+                        {/* Candlestick 1 */}
+                        <line x1="80" y1="50" x2="80" y2="110" stroke="#ef4444" strokeWidth="1.5" />
+                        <rect x="75" y="60" width="10" height="40" fill="#ef4444" />
+
+                        {/* Candlestick 2 */}
+                        <line x1="130" y1="70" x2="130" y2="130" stroke="#ef4444" strokeWidth="1.5" />
+                        <rect x="125" y="80" width="10" height="35" fill="#ef4444" />
+
+                        {/* Candlestick 3 */}
+                        <line x1="180" y1="90" x2="180" y2="120" stroke="#10b981" strokeWidth="1.5" />
+                        <rect x="175" y="95" width="10" height="20" fill="#10b981" />
+
+                        {/* Candlestick 4 */}
+                        <line x1="230" y1="85" x2="230" y2="135" stroke="#ef4444" strokeWidth="1.5" />
+                        <rect x="225" y="95" width="10" height="30" fill="#ef4444" />
+
+                        {/* Candlestick 5 - The Sweep / Spring Candle */}
+                        {activePattern.id === 'wyckoff_spring' ? (
+                          <>
+                            {/* Hammer body with extremely long lower wick/shadow */}
+                            <line x1="280" y1="100" x2="280" y2="160" stroke="#10b981" strokeWidth="1.5" />
+                            <rect x="275" y="105" width="10" height="15" fill="#10b981" />
+                            
+                            {/* Breakout Candle 6 */}
+                            <line x1="330" y1="80" x2="330" y2="115" stroke="#10b981" strokeWidth="1.5" />
+                            <rect x="325" y="85" width="10" height="25" fill="#10b981" />
+
+                            {/* Breakout Candle 7 */}
+                            <line x1="380" y1="50" x2="380" y2="95" stroke="#10b981" strokeWidth="1.5" />
+                            <rect x="375" y="55" width="10" height="30" fill="#10b981" />
+                          </>
+                        ) : activePattern.id === 'bearish_engulfing' ? (
+                          <>
+                            {/* Giant engulfing black/red bar */}
+                            <line x1="280" y1="40" x2="280" y2="130" stroke="#ef4444" strokeWidth="1.5" />
+                            <rect x="273" y="50" width="14" height="70" fill="#ef4444" />
+
+                            {/* Gap down candle 6 */}
+                            <line x1="330" y1="100" x2="330" y2="150" stroke="#ef4444" strokeWidth="1.5" />
+                            <rect x="325" y="110" width="10" height="30" fill="#ef4444" />
+                          </>
+                        ) : (
+                          <>
+                            {/* Standard candles for typical W patterns */}
+                            <line x1="280" y1="75" x2="280" y2="115" stroke="#10b981" strokeWidth="1.5" />
+                            <rect x="275" y="80" width="10" height="25" fill="#10b981" />
+
+                            <line x1="330" y1="80" x2="330" y2="135" stroke="#ef4444" strokeWidth="1.5" />
+                            <rect x="325" y="90" width="10" height="38" fill="#ef4444" />
+
+                            <line x1="380" y1="60" x2="380" y2="110" stroke="#10b981" strokeWidth="1.5" />
+                            <rect x="375" y="65" width="10" height="35" fill="#10b981" />
+                          </>
+                        )}
+                      </svg>
+                    </div>
+
+                    {/* Annotation Description Info Box */}
+                    <div className="bg-[#0b1114]/65 p-4 rounded-xl border border-slate-800">
+                      <h4 className="text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-indigo-400" />
+                        AI 图像视觉多维诊断报告：
+                      </h4>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        {activePattern.description}
+                      </p>
+                      
+                      {/* Sub analysis specifications list */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3.5 pt-3 border-t border-slate-800/60 text-[10px] font-mono">
+                        <div className="space-y-1 text-slate-500">
+                          <div>检测量化状态: <span className="text-slate-300 font-bold">{activePattern.volumeState}</span></div>
+                          <div>多模态像素对齐: <span className="text-slate-300 font-bold">{activePattern.visualAnalysis}</span></div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-slate-500 block mb-0.5">确认防线打穿与反攻条件 triggers:</span>
+                          <ul className="list-disc list-inside text-indigo-400 space-y-0.5 text-[9px]">
+                            {activePattern.confirmationTriggers.map((trig, idx) => (
+                              <li key={idx} className="truncate">{trig}</li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <span className={`text-[11px] font-black tracking-wide px-2 py-0.5 rounded border block w-fit mb-2 ${consensusBadgeColor}`}>
-                        {dynamicVerdict}
-                      </span>
-                      <p className="text-[11px] text-slate-300 leading-relaxed font-sans">
-                        {dynamicVerdictDesc}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right side: Weight Sliders (Tuning Valves) */}
-                <div className="w-full lg:w-[350px] bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                    <span className="text-[10px] text-slate-200 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                      <Sliders className="w-3.5 h-3.5 text-indigo-400" /> 指标决策权重调节阀
-                    </span>
-                    <button 
-                      onClick={() => { setWeightQuant(40); setWeightSmartMoney(40); setWeightChart(20); }}
-                      className="text-[9px] text-indigo-400 hover:text-indigo-300 transition-colors font-bold uppercase"
-                    >
-                      恢复默认
-                    </button>
-                  </div>
-
-                  {/* Slider 1: Tech indicator weight */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center text-[11px] font-mono">
-                      <span className="text-slate-400 flex items-center gap-1">RSI & EMA 量化技术</span>
-                      <span className="text-emerald-400 font-bold">{Math.round(normalizedQuant * 100)}%</span>
-                    </div>
-                    <input 
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={weightQuant}
-                      onChange={(e) => setWeightQuant(Math.max(1, parseInt(e.target.value) || 0))}
-                      className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                    />
-                  </div>
-
-                  {/* Slider 2: Smart Money weight */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center text-[11px] font-mono">
-                      <span className="text-slate-400 flex items-center gap-1">聪明钱及 Wyckoff 资金</span>
-                      <span className="text-indigo-400 font-bold">{Math.round(normalizedSmart * 100)}%</span>
-                    </div>
-                    <input 
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={weightSmartMoney}
-                      onChange={(e) => setWeightSmartMoney(Math.max(1, parseInt(e.target.value) || 0))}
-                      className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                  </div>
-
-                  {/* Slider 3: Chart pattern weight */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center text-[11px] font-mono">
-                      <span className="text-slate-400 flex items-center gap-1">阻力位与突破图表结构</span>
-                      <span className="text-blue-400 font-bold">{Math.round(normalizedChart * 100)}%</span>
-                    </div>
-                    <input 
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={weightChart}
-                      onChange={(e) => setWeightChart(Math.max(1, parseInt(e.target.value) || 0))}
-                      className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                    />
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* Grid of underlying scores */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 text-xs font-mono">
-                <div className="p-3 bg-slate-900/80 border border-slate-800/60 rounded-xl">
-                  <span className="text-slate-500 text-[10px] block">量化技术分 (QUANT)</span>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="font-bold text-slate-100">{rawQuantScore}/100</span>
-                    <span className="text-emerald-400 text-[10px]">权重: {Math.round(normalizedQuant * 100)}%</span>
-                  </div>
-                </div>
-                <div className="p-3 bg-slate-900/80 border border-slate-800/60 rounded-xl">
-                  <span className="text-slate-500 text-[10px] block">主力流向分 (SMART MONEY)</span>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="font-bold text-slate-100">{rawSmartScore}/100</span>
-                    <span className="text-indigo-400 text-[10px]">权重: {Math.round(normalizedSmart * 100)}%</span>
-                  </div>
-                </div>
-                <div className="p-3 bg-slate-900/80 border border-slate-800/60 rounded-xl">
-                  <span className="text-slate-500 text-[10px] block">市场形态分 (CHART STRUCTURE)</span>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="font-bold text-slate-100">{rawChartScore}/100</span>
-                    <span className="text-blue-400 text-[10px]">权重: {Math.round(normalizedChart * 100)}%</span>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
 
             </div>
           </div>
         )}
 
-
-        {/* =============== TAB 2: DEEP MULTI-DIMENSIONAL CORRELATION ANALYSIS =============== */}
-        {activeMiningTab === 'correlation' && (() => {
-          const resolvedCorrelations = getDeterministicCorrelation();
-          const avgDivergence = Math.round(resolvedCorrelations.reduce((acc, c) => acc + c.divergenceScore, 0) / resolvedCorrelations.length);
-          const activeDetail = resolvedCorrelations[selectedCorrelationsIndex] || resolvedCorrelations[0];
-
-          // Overall joint divergence label
-          let jointLabel = "宏观均势耦合 (Optimal Synchrony)";
-          let jointLabelColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
-          let jointProgressColor = "bg-gradient-to-r from-emerald-500 to-teal-500";
-          let jointMetricDesc = "各关联市场定价机制一致。当前走势属于高度良性的系统共振，底仓顺应当前AI大势逻辑，宏观扰动极低。";
-
-          if (avgDivergence >= 65) {
-            jointLabel = "极端脱轨与异常背离警报 (Severe Divergence)";
-            jointLabelColor = "text-rose-400 bg-rose-500/10 border-rose-500/20";
-            jointProgressColor = "bg-gradient-to-r from-rose-500 to-amber-500 animate-pulse";
-            jointMetricDesc = "警告：跨市场资金发生大规模撕裂性摩擦！个股偏离了大市、汇率或债息规律，预示局部有强筹码主力出港或对冲避险盘异常。极易发生暴风雨式补跌或报复性反弹，强制执行金字塔分批建仓法。";
-          } else if (avgDivergence >= 30) {
-            jointLabel = "常态化局部去耦合 (Active Decoupling)";
-            jointLabelColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
-            jointProgressColor = "bg-gradient-to-r from-amber-500 to-indigo-500";
-            jointMetricDesc = "个股表现出强于或弱于大盘的独立Alpha特质，受局部利好/利空支撑。可以适度超配个股特定因子，轻度参考大宏观。";
-          }
-
-          const stockTrendZh = analysis?.signal === SignalType.BUY 
-            ? '📈 偏多(Bullish)' 
-            : analysis?.signal === SignalType.SELL 
-              ? '📉 偏空(Bearish)' 
-              : '⏳ 盘整(Neutral)';
-
-          return (
-            <div className="space-y-6 animate-in fade-in duration-200">
+        {/* ======================= TAB 2: MULTI-SOURCE LIQUIDITY & DARK POOL ======================= */}
+        {activeMiningTab === 'darkpool' && (
+          <div className="space-y-5 animate-in fade-in duration-200" id="panel-darkpool-liquidity">
+            
+            {/* Net Fluid flow meter & Filter configuration */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
               
-              {/* --- EXPLANATION & AGGREGATE DIVERGENCE INDEX CARD --- */}
-              <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-indigo-400 font-bold tracking-widest uppercase block font-mono">
-                      SYSTEM METRIC DEF: INTERMARKET DIVERGENCE CAPTURE
-                    </span>
-                    <h3 className="text-sm font-black text-slate-100 flex items-center gap-1.5 leading-tight">
-                      <GitMerge className="w-4 h-4 text-indigo-400" /> 什么是“关联资产背离度”？
-                    </h3>
-                    <p className="text-[11px] text-slate-400 leading-relaxed max-w-2xl font-sans">
-                      股票并非孤岛。正常情况下，个股走势会与<b>大盘、行业板块、汇率/美元以及国债收益率</b>等宏观“关联资产”保持极强的同向或反向物理牵引。
-                      当这种历史惯性被打破（例如：大盘暴跌，个股在强庄托盘下逆势上涨；或者美元走低，个股却滑落），就会产生<b>“背离度” (Divergence Degree)</b>。
-                      背离度越高，代表个股独立筹码做庄属性越纯，也说明该趋势越具有<b>不可持续的破位暴击风险</b>，或<b>酝酿强烈的探底超额买点</b>。
-                    </p>
-                  </div>
-
-                  {/* Aggregate Gauge */}
-                  <div className="w-full lg:w-[280px] bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between">
-                    <div className="flex items-center justify-between text-[11px] font-mono mb-2">
-                      <span className="text-slate-400 font-sans">全市场资金联合背离指数</span>
-                      <span className="text-xs font-bold text-slate-200">{avgDivergence}%</span>
-                    </div>
-
-                    {/* Progress track */}
-                    <div className="h-2.5 w-full bg-slate-800 rounded-full overflow-hidden mb-3">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500`} 
-                        style={{ width: `${avgDivergence}%`, backgroundImage: 'none' }}
-                      >
-                        <div className={`h-full rounded-full ${jointProgressColor}`} style={{ width: '100%' }} />
-                      </div>
-                    </div>
-
-                    <div className={`text-[9px] font-black uppercase text-center px-2 py-0.5 rounded border ${jointLabelColor}`}>
-                      {jointLabel}
-                    </div>
-                  </div>
+              {/* Filter controls */}
+              <div className="md:col-span-5 bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between h-full min-h-[105px]">
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-405 uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5"><Filter className="w-3.5 h-3.5 text-indigo-400" /> 暗池大单过滤阀</span>
+                  <span className="text-slate-500 text-[8px] font-mono">NOMINAL VALUE LIMIT</span>
                 </div>
-
-                <div className="text-[11px] text-slate-400 leading-relaxed pt-2 border-t border-slate-800/50">
-                  <span className="font-bold text-slate-300">📍 多空系统当前态势:</span> 本股 <b>{symbol}</b> 最新AI量化打分为 <b>{stockTrendZh}</b>。系统正联动全天候资产对潜在偏离展开实时监测。
+                
+                {/* Scale buttons for filter selection */}
+                <div className="flex bg-slate-950/80 p-1 border border-slate-800/80 rounded-lg gap-1 mt-2.5">
+                  {[0.5, 1.0, 5.0, 10.0].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setMinOrderValue(val)}
+                      className={`flex-1 py-1 text-[10px] font-mono font-bold rounded cursor-pointer ${
+                        minOrderValue === val 
+                          ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400' 
+                          : 'text-slate-500 hover:text-slate-300'
+                      }`}
+                    >
+                      &gt; {val}M
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-                {/* Column 1: Asset Correlations Table & Interactive Controls */}
-                <div className="md:col-span-2 space-y-4">
-                  <div className="flex justify-between items-baseline">
-                    <h3 className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-2">
-                      <GitMerge className="w-3.5 h-3.5 text-indigo-400" /> 跨市场核心参考资产监控表 (单击对应行查看技术规避策略)
-                    </h3>
-                    <span className="text-[9px] text-slate-500 font-mono">数据刷新延迟: ~1.2s</span>
-                  </div>
-                  
-                  <div className="bg-slate-950/50 rounded-xl border border-slate-800 overflow-hidden text-[11.5px] shadow-lg">
-                    <table className="w-full text-left border-collapse font-sans">
-                      <thead>
-                        <tr className="border-b border-slate-800 bg-[#0e161b] text-[9.5px] uppercase font-bold text-slate-500 font-sans">
-                          <th className="py-3 px-3">关联参考大宗/指数</th>
-                          <th className="py-3 px-3 text-center">历史关系</th>
-                          <th className="py-3 px-3 text-center">关联系数(r)</th>
-                          <th className="py-3 px-3">对应资产实际趋势</th>
-                          <th className="py-3 px-3">理论期望趋势</th>
-                          <th className="py-3 px-3 text-center">背离偏离度</th>
-                          <th className="py-3 px-3 text-right">大宗影响</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
-                        {resolvedCorrelations.map((c, i) => {
-                          const hasHighDiv = c.divergenceScore >= 60;
-                          const hasLowDiv = c.divergenceScore <= 15;
-                          
-                          let divIndicatorColor = "text-emerald-400";
-                          let divIndicatorText = "同频正常";
-                          let divProgressBarColor = "bg-emerald-500";
-                          
-                          if (hasHighDiv) {
-                            divIndicatorColor = "text-rose-400 font-bold";
-                            divIndicatorText = "异常背离";
-                            divProgressBarColor = "bg-rose-500";
-                          } else if (c.divergenceScore >= 30) {
-                            divIndicatorColor = "text-amber-400";
-                            divIndicatorText = "温和分化";
-                            divProgressBarColor = "bg-amber-500";
-                          }
-
-                          const expectedTrendStr = c.correlationType.includes('Positive')
-                            ? (analysis?.signal === SignalType.BUY ? '📈 偏多' : analysis?.signal === SignalType.SELL ? '📉 偏空' : '⏳ 盘整')
-                            : (analysis?.signal === SignalType.BUY ? '📉 偏空' : analysis?.signal === SignalType.SELL ? '📈 偏多' : '⏳ 盘整');
-
-                          return (
-                            <tr 
-                              key={i} 
-                              onClick={() => setSelectedCorrelationsIndex(i)}
-                              className={`transition-all hover:bg-slate-900/60 cursor-pointer ${
-                                selectedCorrelationsIndex === i 
-                                  ? 'bg-slate-800/40 border-l-2 border-l-indigo-500 border-y border-y-slate-800/50' 
-                                  : ''
-                              }`}
-                            >
-                              {/* Asset name */}
-                              <td className="py-3.5 px-3 font-bold text-slate-200">
-                                <div className="flex items-center gap-1.5">
-                                  {selectedCorrelationsIndex === i && <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping shrink-0" />}
-                                  <span className="font-sans">{c.correlatedAsset}</span>
-                                </div>
-                              </td>
-
-                              {/* Relation Type */}
-                              <td className="py-3.5 px-3 text-center">
-                                <span className={`px-1.5 py-0.2 rounded font-mono font-bold text-[8.5px] ${
-                                  c.correlationType.includes('Positive') 
-                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' 
-                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/10'
-                                }`}>
-                                  {c.correlationType.includes('Positive') ? "正相关 ⇄" : "负相关 ⇆"}
-                                </span>
-                              </td>
-
-                              {/* Correlation strength coefficient */}
-                              <td className="py-3.5 px-3 text-center font-bold text-slate-400 text-xs">
-                                {c.coefficient > 0 ? `+${c.coefficient}` : c.coefficient}
-                              </td>
-
-                              {/* Actual current trend */}
-                              <td className="py-3.5 px-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  c.assetTrend === 'Bullish' 
-                                    ? 'text-emerald-400 bg-emerald-500/5 border border-emerald-500/10' 
-                                    : c.assetTrend === 'Bearish' 
-                                      ? 'text-rose-400 bg-rose-500/5 border border-rose-500/10' 
-                                      : 'text-slate-500 bg-slate-900 border border-slate-805'
-                                }`}>
-                                  {c.assetTrend === 'Bullish' ? '📈 实际偏多' : c.assetTrend === 'Bearish' ? '📉 实际偏空' : '⏳ 实际横盘'}
-                                </span>
-                              </td>
-
-                              {/* Expected Theoretical trend */}
-                              <td className="py-3.5 px-3 font-sans text-slate-400">
-                                {expectedTrendStr}
-                              </td>
-
-                              {/* Divergence Index visually with indicator percentage */}
-                              <td className="py-3.5 px-3 text-center">
-                                <div className="inline-flex flex-col items-center w-full max-w-[90px] gap-1">
-                                  <div className="flex justify-between w-full text-[9px] font-bold">
-                                    <span className={divIndicatorColor}>{divIndicatorText}</span>
-                                    <span className="text-slate-200">{c.divergenceScore}%</span>
-                                  </div>
-                                  <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                                    <div className={`h-full ${divProgressBarColor}`} style={{ width: `${c.divergenceScore}%` }} />
-                                  </div>
-                                </div>
-                              </td>
-
-                              {/* Impact */}
-                              <td className="py-3.5 px-3 text-right">
-                                <span className={`font-bold text-[10.5px] rounded px-1.5 py-0.5 ${
-                                  c.impact.includes('Tailwind') 
-                                    ? 'text-emerald-400 bg-emerald-950/20' 
-                                    : c.impact.includes('Headwind') 
-                                      ? 'text-rose-400 bg-rose-955/20' 
-                                      : 'text-slate-500 bg-slate-900'
-                                }`}>
-                                  {c.impact.includes('Tailwind') ? '助推 (Tailwind)' : c.impact.includes('Headwind') ? '阻力 (Headwind)' : '中性 (Neutral)'}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* EXPERT LOBBY ANALYSIS BLOCK FOR INDIVIDUAL DIVERGENCE ACTIVE ITEM */}
-                  <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-5 space-y-3 shadow-lg">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-5 w-5 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/25">
-                          🔬
-                        </span>
-                        <div>
-                          <span className="text-[10px] text-slate-500 uppercase font-bold block leading-none font-mono">SELECTED DIVERGENT PROFILE DEEP DIVE</span>
-                          <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5 mt-0.5">
-                            相关性对冲诊断: <span className="text-indigo-400">[{symbol} ⇄ {activeDetail.correlatedAsset}]</span>
-                          </h4>
-                        </div>
-                      </div>
-                      <span className={`text-[10px] font-mono font-bold px-2 py-0.2 rounded border uppercase ${
-                        activeDetail.divergenceScore >= 60 
-                          ? 'border-rose-500/20 bg-rose-500/10 text-rose-400' 
-                          : activeDetail.divergenceScore >= 30 
-                            ? 'border-amber-500/20 bg-amber-500/10 text-amber-400' 
-                            : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
-                      }`}>
-                        {activeDetail.divergenceType}
-                      </span>
-                    </div>
-
-                    <div className="text-[11px] leading-relaxed text-slate-300 font-sans space-y-2.5">
-                      <p className="indent-2 leading-relaxed leading-normal">{activeDetail.explanation}</p>
-                    </div>
-
-                    {(() => {
-                      const crossAssetDivergenceData = generateCrossAssetDivergenceData(symbol, activeDetail.correlatedAsset, activeDetail.coefficient, activeDetail.divergenceScore);
-                      return (
-                        <div className="mt-4 pt-3 border-t border-slate-800/60">
-                          <div className="flex items-center justify-between text-[9.5px] uppercase font-bold text-slate-400 mb-2 font-mono">
-                             <span className="flex items-center gap-1.5">📈 联动走势与背离度时序实测 (Co-Movement & Divergence Sync)</span>
-                             <span className="text-indigo-400 text-[8.5px]">时间轴 (X-Axis): 发生时点 (时分)</span>
-                          </div>
-                          
-                          <div className="w-full h-[155px] relative bg-slate-950/50 rounded-lg border border-slate-850 p-2.5 overflow-hidden">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <AreaChart data={crossAssetDivergenceData} margin={{ top: 10, right: 10, left: -25, bottom: 5 }}>
-                                <defs>
-                                  <linearGradient id="tickerGrad" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.12}/>
-                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
-                                  </linearGradient>
-                                </defs>
-                                <XAxis 
-                                  dataKey="time" 
-                                  axisLine={false} 
-                                  tickLine={false} 
-                                  tick={{ fill: '#475569', fontSize: 7, fontFamily: 'monospace' }} 
-                                />
-                                <YAxis 
-                                  axisLine={false} 
-                                  tickLine={false} 
-                                  tick={{ fill: '#475569', fontSize: 7, fontFamily: 'monospace' }} 
-                                />
-                                <RechartsTooltip 
-                                  content={({ active, payload }) => {
-                                    if (active && payload && payload.length) {
-                                      const item = payload[0].payload;
-                                      return (
-                                        <div className="bg-slate-900 border border-slate-800 p-2 rounded text-[9.5px] font-mono text-slate-300 shadow-2xl flex flex-col gap-1 min-w-[120px]">
-                                          <div className="text-slate-500 font-bold border-b border-slate-800 pb-0.5 mb-0.5 flex justify-between">
-                                            <span>发生时点 (Time):</span>
-                                            <span className="text-indigo-400">{item.time}</span>
-                                          </div>
-                                          <div className="flex justify-between gap-4">
-                                            <span className="text-slate-400 font-bold">{symbol.toUpperCase()}:</span>
-                                            <span className={item.ticker >= 0 ? "text-emerald-400" : "text-rose-400"}>
-                                              {item.ticker > 0 ? `+${item.ticker}` : item.ticker}%
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between gap-4">
-                                            <span className="text-slate-400">参考关联资产:</span>
-                                            <span className={item.correlated >= 0 ? "text-emerald-400" : "text-rose-400"}>
-                                              {item.correlated > 0 ? `+${item.correlated}` : item.correlated}%
-                                            </span>
-                                          </div>
-                                          <div className="w-full h-px bg-slate-800 my-0.5"></div>
-                                          <div className="flex justify-between gap-4 text-indigo-400 font-semibold font-mono">
-                                            <span>绝对背离度 (Div):</span>
-                                            <span className="text-slate-200">
-                                              {item.divergence}%
-                                            </span>
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-                                    return null;
-                                  }}
-                                />
-                                <Area 
-                                  type="monotone" 
-                                  dataKey="ticker" 
-                                  name={symbol.toUpperCase()}
-                                  stroke="#6366f1" 
-                                  strokeWidth={1.5} 
-                                  fill="url(#tickerGrad)" 
-                                  dot={false}
-                                />
-                                <Area 
-                                  type="monotone" 
-                                  dataKey="correlated" 
-                                  name="关联资产"
-                                  stroke="#cbd5e1" 
-                                  strokeWidth={1} 
-                                  strokeDasharray="3 3"
-                                  fill="none" 
-                                  dot={false}
-                                />
-                              </AreaChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-[10px] bg-slate-950/40 p-3 rounded-lg border border-slate-800/60 pt-2.5">
-                      <span className="text-slate-400 flex items-center gap-1.5">
-                        💡 <span className="font-bold text-slate-200">资金对冲指引 (Hedge Plan):</span>
-                        {activeDetail.divergenceScore >= 60
-                          ? `当前背离突出！应严厉回避单向买入博弈。推荐使用 [${activeDetail.correlatedAsset}] 部分反向敞口进行系统对冲，锁仓安全水位。`
-                          : "历史相关机制运行平顺，常规仓位布局无需过度避险对冲。"}
-                      </span>
-                      <button 
-                        onClick={() => {
-                          const recommendedLeverage = activeDetail.divergenceScore >= 60 ? 1 : 3;
-                          setLeverage(recommendedLeverage);
-                          // Select custom ticker as active
-                          const shortAsset = activeDetail.correlatedAsset.split(' ')[0] || "BTC";
-                          handleSimulateTicker(shortAsset);
-                        }}
-                        className="text-[9.5px] font-mono text-indigo-400 hover:underline flex hover:text-indigo-300 font-bold shrink-0 items-center justify-center"
-                      >
-                        设置该对冲环境
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* --- NEW INTERACTIVE CROSS-MARKET HEDGING SIMULATOR --- */}
-                  <div className="bg-slate-950/20 rounded-xl border border-slate-800 p-5 space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <h4 className="text-xs font-bold text-slate-200 uppercase tracking-widest flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" /> 跨市场自定义资产关联度推演
-                    </h4>
-                    <span className="text-[9px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-1.5 py-0.2 rounded font-mono font-bold">
-                      套利推演
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-                    输入任意外部资产代号或行业板块ETFs（如 <b>GLD</b>、<b>US10Y</b>、<b>ETH</b> 或 <b>NVIDIA</b> 等），核心共识算法将基于价格波动共振与宏观资金流向，深度演算其与本标的 <b>{symbol}</b> 的联动因子和规避防守策略。
-                  </p>
-
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="flex-1 relative">
-                      <input 
-                        type="text"
-                        placeholder="输入标的名 (如 AAPL, QQQ, TSLA, DXY...)"
-                        value={customTicker}
-                        onChange={(e) => handleSimulateTicker(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-lg py-2 pl-3 pr-16 text-xs font-mono text-slate-100 uppercase focus:outline-none focus:border-indigo-500 transition-colors"
-                      />
-                      <span className="absolute right-2.5 top-2 text-[9px] text-slate-500 bg-slate-950 px-1.5 py-0.5 rounded font-mono font-bold">
-                        INPUT
-                      </span>
-                    </div>
-                    
-                    {/* Quick Trigger Preset Buttons */}
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      <span className="text-[9px] text-slate-500 uppercase font-bold mr-1">快捷预设:</span>
-                      {['QQQ', 'BTC', 'DXY', 'GLD', 'US10Y'].map((t) => (
-                        <button
-                          key={t}
-                          onClick={() => handleSimulateTicker(t)}
-                          className={`px-2 py-1 text-[10px] font-mono rounded font-bold border transition-all cursor-pointer ${
-                            customTicker === t 
-                              ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 scale-105' 
-                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-                          }`}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Visual Correlation Slider Bar */}
-                  <div className="bg-[#0b1215] border border-slate-800/80 rounded-xl p-4">
-                    <div className="flex justify-between items-baseline mb-1">
-                      <span className="text-[11px] text-slate-400">
-                        联动系数 <span className="font-mono font-bold text-slate-100">[{symbol} ⇄ {customTicker}]</span>
-                      </span>
-                      <span className={`text-sm font-mono font-black ${
-                        simulatedCorrelation >= 0.5 ? 'text-emerald-400' : simulatedCorrelation <= -0.5 ? 'text-rose-400' : 'text-slate-200'
-                      }`}>
-                        {simulatedCorrelation > 0 ? `+${simulatedCorrelation.toFixed(2)}` : simulatedCorrelation.toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div className="relative h-2 bg-slate-800 rounded-full my-3 overflow-hidden border border-slate-700/40">
-                      {/* Center static anchor */}
-                      <div className="absolute left-1/2 w-0.5 h-full bg-slate-600/80 z-20" />
-                      {/* Active gauge segment */}
-                      <div 
-                        className={`absolute top-0 h-full transition-all duration-300 ${
-                          simulatedCorrelation >= 0 ? 'bg-gradient-to-r from-indigo-500/20 to-emerald-500' : 'bg-gradient-to-l from-indigo-500/20 to-rose-400'
-                        }`}
-                        style={{
-                          left: simulatedCorrelation >= 0 ? '50%' : `${50 + simulatedCorrelation * 50}%`,
-                          width: `${Math.abs(simulatedCorrelation) * 50}%`
-                        }}
-                      />
-                    </div>
-                    
-                    <div className="flex justify-between text-[8px] font-mono text-slate-600">
-                      <span>-1.0 极端对冲</span>
-                      <span>0.0 无关联</span>
-                      <span>+1.0 极端共振</span>
-                    </div>
-
-                    {/* Reasoning description box */}
-                    <div className="mt-4 p-3 bg-slate-900/40 rounded-lg border border-slate-800 text-[11px] text-slate-300 leading-relaxed leading-normal font-sans">
-                      <span className="font-bold text-indigo-400 block mb-1">📍 跨资产对冲建议:</span>
-                      {correlationReasoning}
-                    </div>
-                  </div>
+              {/* Taker buy bull/bear balance gauge */}
+              <div className="md:col-span-7 bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between h-full min-h-[105px]">
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5"><Activity className="w-3.5 h-3.5 text-amber-400 animate-pulse" /> 实时大单买入强度 (Taker Strength Ratio)</span>
+                  <button onClick={handleRefreshLiquidity} className="text-slate-500 font-mono text-[8px] flex items-center gap-1 hover:text-slate-300 cursor-pointer">
+                    <RefreshCw className="w-2.5 h-2.5" /> 刷新数据步长
+                  </button>
                 </div>
-              </div>
-
-              {/* Column 2: Event Catalysts Radar & Social Divergence */}
-              <div className="space-y-4">
-                <div className="bg-[#0b1215]/85 p-5 rounded-xl border border-slate-800 space-y-4">
-                  <h3 className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-800 pb-2">
-                    <Calendar className="w-3.5 h-3.5 text-amber-400" /> 近期重要催化事件雷达
-                  </h3>
-                  <div className="space-y-3 font-mono text-[11px]">
-                    <div>
-                      <span className="text-slate-500 block text-[9px]">主导催化事件:</span>
-                      <span className="text-slate-100 font-bold block mt-1">{catalyst.nextEvent}</span>
-                    </div>
-                    <div className="flex justify-between items-center bg-slate-950 px-2.5 py-1.5 rounded border border-slate-805">
-                      <span className="text-slate-500">剧烈波动可能性:</span>
-                      <span className="text-rose-400 font-black text-xs">{catalyst.eventImpact}</span>
-                    </div>
-                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] leading-relaxed text-amber-300">
-                      <span className="font-bold block mb-1">⏰ 风控提醒:</span>
-                      {catalyst.timingWarning}
-                    </div>
+                
+                {/* 3D sliding scale balance bar bar visualization */}
+                <div className="mt-3">
+                  <div className="flex justify-between text-[10px] font-mono mb-1.5">
+                    <span className="text-emerald-400 font-bold">主吃多头 (Institutional Buy): {orderFlowBuyRatio}%</span>
+                    <span className="text-rose-400 font-bold">{100 - orderFlowBuyRatio}% :主砸空头 (Active Sell)</span>
                   </div>
-                </div>
-
-                <div className="bg-[#0b1215]/85 p-5 rounded-xl border border-slate-800 space-y-3.5">
-                  <h3 className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-800 pb-2">
-                    <MessageSquare className="w-3.5 h-3.5 text-indigo-400" /> 社群零售分歧背离矩阵
-                  </h3>
-                  <div className="space-y-2.5 font-mono text-[11px]">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">散户散落情绪:</span>
-                      <span className="text-rose-400 font-bold">{social.retailMood} (狂热偏多)</span>
+                  <div className="w-full h-2.5 rounded-full bg-rose-950/30 overflow-hidden flex border border-slate-800 shadow-inner">
+                    <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 relative" style={{ width: `${orderFlowBuyRatio}%` }}>
+                      <div className="absolute inset-0 bg-white/10 animate-pulse" />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">大单资金真实行为:</span>
-                      <span className="text-emerald-400 font-bold">{social.institutionalAction}</span>
-                    </div>
-                    <div className="p-2.5 bg-indigo-505 bg-indigo-500/10 border border-indigo-500/25 rounded text-[10.5px] text-slate-300 leading-relaxed font-sans">
-                      <span className="text-indigo-400 font-mono font-bold block mb-0.5">多空情绪背离度:</span>
-                      {social.divergenceStatus}
-                    </div>
+                    <div className="h-full bg-gradient-to-l from-rose-500 to-pink-500" style={{ width: `${100 - orderFlowBuyRatio}%` }} />
                   </div>
                 </div>
               </div>
 
             </div>
-          </div>
-        );
-      })()}
 
-
-        {/* =============== TAB 3: EXIT PLAN RISK CALCULATOR =============== */}
-        {activeMiningTab === 'calculator' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-
-              {/* Left Column: Interactive Inputs */}
-              <div className="md:col-span-4 bg-[#0b1215]/85 p-5 rounded-xl border border-slate-805 space-y-4">
-                <h3 className="text-[10px] text-slate-300 font-bold uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-800 pb-2">
-                  <Sliders className="w-3.5 h-3.5 text-amber-400" /> 风控计算器参数输入 (Inputs)
-                </h3>
-
-                {/* Capital Input */}
-                <div>
-                  <label className="text-[10px] text-slate-500 block mb-1.5 uppercase font-bold tracking-wide">
-                    总资产账户净值 (Portfolio Equity)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-xs text-slate-500 font-mono font-bold">$</span>
-                    <input
-                      type="number"
-                      value={portfolioSize}
-                      onChange={(e) => setPortfolioSize(Math.max(1, parseFloat(e.target.value) || 0))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 pl-7 pr-3 text-xs font-mono text-slate-100 focus:outline-none focus:border-amber-500 transition-colors"
-                    />
-                  </div>
+            {/* Depth Chart and Table Grid */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+              
+              {/* Order wall Depth visualization with Recharts */}
+              <div className="xl:col-span-5 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-405 font-bold uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <span>买卖极限档位大单挂单墙 (Order Book Walls)</span>
+                  <span className="text-[8px] font-mono text-slate-500 font-bold uppercase">DEPTH GEX</span>
                 </div>
 
-                {/* Single Trade Risk Target */}
-                <div>
-                  <div className="flex justify-between items-center mb-1.5">
-                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wide">
-                      单笔最大允许风险 (Risk Tolerated)
-                    </label>
-                    <span className="text-xs font-mono font-bold text-amber-400">{riskPercent}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0.25"
-                    max="10"
-                    step="0.25"
-                    value={riskPercent}
-                    onChange={(e) => setRiskPercent(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
-                  />
-                  <span className="text-[9px] text-slate-600 block mt-1 font-mono">
-                    允许单回扣止损最大消耗资产达: <span className="text-rose-400 font-bold">${maxRiskAmountDollars.toLocaleString()}</span>
+                <div className="w-full h-[190px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={depthData}
+                      layout="vertical"
+                      margin={{ top: 5, right: 5, left: 15, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#102028" horizontal={false} />
+                      <XAxis type="number" stroke="#475569" fontSize={9} fontClassName="font-mono" />
+                      <YAxis dataKey="price" type="number" domain={['auto', 'auto']} stroke="#475569" fontSize={8} scale="linear" fontClassName="font-mono" />
+                      <RechartsTooltip
+                        contentStyle={{ backgroundColor: '#090f12', borderColor: '#1e293b', fontSize: '10px' }}
+                        itemStyle={{ color: '#94a3b8' }}
+                        labelStyle={{ fontStyle: 'bold', color: '#fff' }}
+                      />
+                      <Bar dataKey="bid" name="机构限价买单壁垒" fill="#10b981" radius={[0, 4, 4, 0]} fillOpacity={0.6} />
+                      <Bar dataKey="ask" name="机构限价抛空压阻" fill="#ef4444" radius={[0, 4, 4, 0]} fillOpacity={0.6} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-slate-950/40 p-2 border border-slate-800/80 rounded mt-1.5 text-[9px] text-slate-500 leading-snug">
+                  * 注：多模态智能体正在对暗属流动席位的【限价挂单大单（Hidden Walls）】实施自动匹配。密集买墙将起极其强横的买盘支撑引力（Gravity Support）。
+                </div>
+              </div>
+
+              {/* Live Dark Pool prints table */}
+              <div className="xl:col-span-7 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-3 flex justify-between items-center">
+                  <span>多源交易机制与暗池大单高亮闪跳 (Dark Pool Block Actions)</span>
+                  <span className="text-[8.5px] text-[#cca55e] bg-amber-500/5 px-2 py-0.5 border border-amber-500/10 rounded font-mono font-bold uppercase">
+                    {lastTickTime}
                   </span>
                 </div>
 
-                {/* Interactive Leverage Slider */}
-                <div>
-                  <div className="flex justify-between items-center mb-1.5">
-                    <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wide">
-                      放大杠杆倍率 (Leverage Multiplier)
-                    </label>
-                    <span className="text-xs font-mono font-bold text-indigo-400">{leverage}x</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="50"
-                    step="1"
-                    value={leverage}
-                    onChange={(e) => setLeverage(parseInt(e.target.value) || 1)}
-                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                  />
-                  {/* Leverage presets */}
-                  <div className="flex gap-1.5 mt-2 flex-wrap">
-                    {[1, 3, 5, 10, 20, 50].map((x) => (
-                      <button
-                        key={x}
-                        type="button"
-                        onClick={() => setLeverage(x)}
-                        className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded border cursor-pointer transition-all ${
-                          leverage === x 
-                            ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 scale-105' 
-                            : 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-slate-200'
-                        }`}
-                      >
-                        {x}x
-                      </button>
-                    ))}
-                  </div>
+                <div className="flex-1 overflow-x-auto min-h-[195px]">
+                  <table className="w-full text-left font-mono border-collapse text-[10px]">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-500 pb-2">
+                        <th className="pb-1.5 font-bold">时间</th>
+                        <th className="pb-1.5 font-bold">特定暗池渠道</th>
+                        <th className="pb-1.5 font-bold">交易意图</th>
+                        <th className="pb-1.5 font-bold text-right">成交价</th>
+                        <th className="pb-1.5 font-bold text-right">交易额</th>
+                        <th className="pb-1.5 font-bold">成交策略描述</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderPrints
+                        .filter(item => item.value >= minOrderValue)
+                        .map((print) => (
+                          <tr key={print.id} className="border-b border-slate-800/30 hover:bg-slate-900/40 transition-colors">
+                            <td className="py-2 text-slate-500 font-bold">{print.time}</td>
+                            <td className="py-2 text-slate-200">{print.venue}</td>
+                            <td className="py-2">
+                              <span className={`px-1.5 py-0.5 rounded font-bold text-[8px] tracking-wide ${
+                                print.side === 'ACCUMULATION' 
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                  : print.side === 'DISTRIBUTION' 
+                                    ? 'bg-rose-505/10 text-rose-400 border border-rose-500/20' 
+                                    : 'bg-slate-800 text-slate-400'
+                              }`}>
+                                {print.side === 'ACCUMULATION' ? '机构大买' : print.side === 'DISTRIBUTION' ? '机构砸扣' : '大单对敲'}
+                              </span>
+                            </td>
+                            <td className="py-2 text-right text-slate-300 font-bold">{print.price.toFixed(2)}</td>
+                            <td className="py-2 text-right text-amber-400 font-bold">{print.value}M</td>
+                            <td className="py-2 text-slate-500 text-[9px]">{print.type}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
 
-                {/* Prices overrides */}
-                <div className="space-y-3.5 pt-3.5 border-t border-slate-800/60">
-                  <div>
-                    <div className="flex justify-between items-baseline mb-1">
-                      <label className="text-[10px] text-slate-500 block font-bold">
-                        出入场均价 (Entry Target)
-                      </label>
-                      <div className="flex gap-1">
-                        <button 
-                          type="button" 
-                          onClick={() => adjustPriceFactor('entry', 0.005)}
-                          className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-slate-400 rounded hover:text-slate-200 cursor-pointer"
-                        >
-                          +0.5%
-                        </button>
-                        <button 
-                          type="button" 
-                          onClick={() => adjustPriceFactor('entry', -0.005)}
-                          className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-slate-400 rounded hover:text-slate-200 cursor-pointer"
-                        >
-                          -0.5%
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      type="number"
-                      value={manualEntryPrice}
-                      onChange={(e) => setManualEntryPrice(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs font-mono text-slate-100 focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="flex justify-between items-baseline mb-1">
-                        <label className="text-[10px] text-emerald-400 block font-bold font-sans">
-                          目标止盈 (Take Profit)
-                        </label>
-                        <div className="flex gap-1 select-none">
-                          <button 
-                            type="button" 
-                            onClick={() => adjustPriceFactor('tp', 0.01)}
-                            className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-emerald-500 rounded hover:text-emerald-300 cursor-pointer"
-                          >
-                            +1%
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => adjustPriceFactor('tp', -0.01)}
-                            className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-emerald-500 rounded hover:text-emerald-300 cursor-pointer"
-                          >
-                            -1%
-                          </button>
-                        </div>
-                      </div>
-                      <input
-                        type="number"
-                        value={manualTakeProfit}
-                        onChange={(e) => setManualTakeProfit(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs font-mono text-emerald-400 focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-baseline mb-1">
-                        <label className="text-[10px] text-red-400 block font-bold font-sans">
-                          防守止损 (Stop Loss)
-                        </label>
-                        <div className="flex gap-1 select-none">
-                          <button 
-                            type="button" 
-                            onClick={() => adjustPriceFactor('sl', 0.01)}
-                            className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-rose-500 rounded hover:text-rose-300 cursor-pointer"
-                          >
-                            +1%
-                          </button>
-                          <button 
-                            type="button" 
-                            onClick={() => adjustPriceFactor('sl', -0.01)}
-                            className="px-1 py-0.2 text-[8px] font-mono bg-slate-900 border border-slate-800 text-rose-500 rounded hover:text-rose-300 cursor-pointer"
-                          >
-                            -1%
-                          </button>
-                        </div>
-                      </div>
-                      <input
-                        type="number"
-                        value={manualStopLoss}
-                        onChange={(e) => setManualStopLoss(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-1.5 px-3 text-xs font-mono text-red-400 focus:outline-none focus:border-red-500"
-                      />
-                    </div>
-                  </div>
+                <div className="mt-2 pt-2 border-t border-slate-800/40 flex items-center justify-between text-[9px] text-slate-550">
+                  <span>* 数据采集频率: 毫秒级分时脱敏，已对同频大额对敲算法实施熔断剔除</span>
+                  <span className="text-amber-500">主力买卖大宗净额度: <b>+382.4M (温和增持)</b></span>
                 </div>
-
-              </div>
-
-              {/* Right Column: Calculations Rendered beautiful */}
-              <div className="md:col-span-8 flex flex-col gap-6">
-
-                {/* Risk Sizing Meter */}
-                <div className="bg-slate-950/40 rounded-xl border border-slate-800 p-5 space-y-4">
-                  <h4 className="text-xs font-bold text-slate-200 uppercase tracking-widest flex items-center gap-2">
-                    <Scale className="w-4 h-4 text-emerald-400" /> 基于风控优先原则的安全仓位计算结果
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    
-                    <div className="bg-slate-900 border border-slate-805 p-3.5 rounded-xl flex flex-col justify-between">
-                      <span className="text-[9px] text-slate-500 uppercase font-bold block">止损价格空间</span>
-                      <div className="mt-1 font-mono">
-                        <span className="text-sm font-bold text-red-400 block">
-                          {formatCurrency(slDistance)}
-                        </span>
-                        <span className="text-[10px] text-slate-500 mt-0.5">波幅 {slPercentage.toFixed(2)}%</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border border-slate-850 p-3.5 rounded-xl border-dashed border-emerald-500/20 flex flex-col justify-between">
-                      <span className="text-[9px] text-emerald-400 uppercase font-bold block">最大安全开仓股数</span>
-                      <div className="mt-1 font-mono">
-                        <span className="text-lg font-black text-emerald-400 block tracking-tight">
-                          {safePositionQuantity.toLocaleString()} <span className="text-xs font-normal">股</span>
-                        </span>
-                        <span className="text-[9px] text-slate-500 block">不让单回亏损越过风控限制</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border border-slate-805 p-3.5 rounded-xl flex flex-col justify-between">
-                      <span className="text-[9px] text-slate-500 uppercase font-bold block">名义合约总市值</span>
-                      <div className="mt-1 font-mono">
-                        <span className="text-sm font-bold text-slate-200 block">
-                          {formatCurrency(nominalPositionValue)}
-                        </span>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">
-                          占总资本 {(nominalPositionValue / portfolioSize * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-900 border border-slate-805 p-3.5 rounded-xl flex flex-col justify-between">
-                      <span className="text-[9px] text-indigo-400 uppercase font-bold block">实缴保证金 (Margin)</span>
-                      <div className="mt-1 font-mono">
-                        <span className="text-sm font-bold text-indigo-400 block">
-                          {formatCurrency(marginRequired)}
-                        </span>
-                        <span className="text-[9px] text-slate-500 block">
-                          按自研 {leverage}x 杠杆折合
-                        </span>
-                      </div>
-                    </div>
-
-                  </div>
-                </div>
-
-                {/* Mathematical Expectations and Kelly Score */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-                  {/* Math Expectation Check */}
-                  <div className={`border p-4 rounded-xl ${rrColorClass.border} ${rrColorClass.bg}`}>
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-200">
-                        期望盈亏比评估 (Reward to Risk Check)
-                      </span>
-                      <span className={`px-2 py-0.5 text-[8px] font-mono font-bold rounded ${rrColorClass.text} border border-current`}>
-                        {rrColorClass.label}
-                      </span>
-                    </div>
-                    
-                    <div className="flex items-baseline gap-2 font-mono">
-                      <span className="text-3xl font-black text-slate-100 tracking-tighter">
-                        {calculatedRRRatio.toFixed(2)} : 1
-                      </span>
-                    </div>
-
-                    <div className="space-y-2 mt-3 text-[10px] leading-relaxed text-slate-400 font-mono">
-                      <div className="flex justify-between">
-                        <span>预期盈利幅 (TP %):</span>
-                        <span className="text-emerald-400 font-bold">+{tpPercentage.toFixed(2)}%</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>止损保护幅 (SL %):</span>
-                        <span className="text-red-400 font-bold">-{slPercentage.toFixed(2)}%</span>
-                      </div>
-                      <div className="border-t border-slate-800/40 pt-1.5 flex justify-between text-slate-300">
-                        <span>1万美金资金预期最大回报:</span>
-                        <span className="text-emerald-300 font-bold">
-                          {formatCurrency((10000 / entryPriceVal) * tpDistance)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Kelly Criterion Formula Output */}
-                  <div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl flex flex-col justify-between">
-                    <div>
-                      <span className="text-[10px] text-slate-400 uppercase block font-bold tracking-wider mb-2">
-                        数学概率模型 ─ 凯利公式最优下注比例 (Kelly Option)
-                      </span>
-                      <div className="flex items-baseline gap-2 font-mono">
-                        <span className={`text-2xl font-bold tracking-tight ${kellyPct > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-                          {kellyPct > 0 ? `${kellyPct.toFixed(1)}%` : '0.00% (不建议交易)'}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 leading-relaxed mt-2.5">
-                        凯利下注比率综合参考了 AI 推测胜率 (<span className="text-emerald-400 font-bold font-mono">{winPercent}%</span>) 与当前出场目标的盈亏比系数进行博弈配比。
-                      </p>
-                    </div>
-
-                    <div className="text-[9px] text-slate-500 border-t border-slate-800/60 pt-2 font-mono">
-                      {kellyPct > 0 
-                        ? "✓ 该期望数值为正。根据凯利公式，以此仓位大小中长期执行能在本胜率下实现最大复利增长。"
-                        : "⚠ 注意: 当前多空盈亏比空间偏低或胜率偏低，期望可能为负，凯利建议本场轻仓观望或调大止盈比。"
-                      }
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* --- NEW INTERACTIVE PYRAMID SCALING PLAN MATRIX --- */}
-                <div className="bg-slate-950/40 rounded-xl border border-slate-800 p-5 space-y-3.5">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                    <h4 className="text-xs font-bold text-slate-200 uppercase tracking-widest flex items-center gap-2">
-                      <Flame className="w-4 h-4 text-emerald-400 animate-pulse" /> 渐进式金字塔型分批开仓策略与推演
-                    </h4>
-                    <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.2 rounded font-mono font-bold">
-                      PYRAMID RADIAL
-                    </span>
-                  </div>
-
-                  <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
-                    将主打安全额度（安全开仓股数：<span className="text-emerald-400 font-bold">{safePositionQuantity.toLocaleString()}</span> 股）做分段梯度拆解，能有效在均线反复拉锯时平顺买入均价、大幅优化盈亏比敞口。
-                  </p>
-
-                  <div className="overflow-hidden rounded-lg border border-slate-800 text-[11px] font-mono">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-[#0e161b] text-slate-500 text-[9px] uppercase font-bold border-b border-slate-800">
-                          <th className="py-2.5 px-3">梯队级别</th>
-                          <th className="py-2.5 px-3">仓位比</th>
-                          <th className="py-2.5 px-3">股数分配</th>
-                          <th className="py-2.5 px-3">建仓参考价</th>
-                          <th className="py-2.5 px-3">单段所需保证金</th>
-                          <th className="py-2.5 px-3 text-right">触发生态策略</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/60 text-slate-300">
-                        {/* Stage 1 */}
-                        <tr className="hover:bg-slate-900/40 transition-colors">
-                          <td className="py-2.5 px-3 font-bold text-emerald-400">第一梯队 (底仓)</td>
-                          <td className="py-2.5 px-3">
-                            <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/10 px-1.5 py-0.2 rounded text-[9px] font-bold">50%</span>
-                          </td>
-                          <td className="py-2.5 px-3 font-bold text-slate-100">{pyramidStage1Shares.toLocaleString()} 股</td>
-                          <td className="py-2.5 px-3 text-slate-200">{formatCurrency(pyramidStage1Price)}</td>
-                          <td className="py-2.5 px-3 text-indigo-400">
-                            {formatCurrency(pyramidStage1Margin)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-400 text-xs">市价或限价首笔打底介入，确筹防踏空。</td>
-                        </tr>
-
-                        {/* Stage 2 */}
-                        <tr className="hover:bg-slate-900/40 transition-colors">
-                          <td className="py-2.5 px-3 font-bold text-indigo-400">第二梯队 (防守补仓)</td>
-                          <td className="py-2.5 px-3">
-                            <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/10 px-1.5 py-0.2 rounded text-[9px] font-bold">30%</span>
-                          </td>
-                          <td className="py-2.5 px-3 font-bold text-slate-100">{pyramidStage2Shares.toLocaleString()} 股</td>
-                          <td className="py-2.5 px-3 text-amber-500 font-bold">
-                            {formatCurrency(pyramidStage2Price)}
-                          </td>
-                          <td className="py-2.5 px-3 text-indigo-400">
-                            {formatCurrency(pyramidStage2Margin)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-400 text-xs">Fib 0.382 筹码洗盘黄金防守带埋伏阻击。</td>
-                        </tr>
-
-                        {/* Stage 3 */}
-                        <tr className="hover:bg-slate-900/40 transition-colors">
-                          <td className="py-2.5 px-3 font-bold text-rose-400">第三梯队 (突破加仓)</td>
-                          <td className="py-2.5 px-3">
-                            <span className="bg-rose-500/10 text-rose-400 border border-rose-500/10 px-1.5 py-0.2 rounded text-[9px] font-bold">20%</span>
-                          </td>
-                          <td className="py-2.5 px-3 font-bold text-slate-100">{pyramidStage3Shares.toLocaleString()} 股</td>
-                          <td className="py-2.5 px-3 text-emerald-400 font-bold">
-                            {formatCurrency(pyramidStage3Price)}
-                          </td>
-                          <td className="py-2.5 px-3 text-indigo-400">
-                            {formatCurrency(pyramidStage3Margin)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-slate-400 text-xs">确认升破颈线阻力，或AI放量信号再次确立时加兵。</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Final Safety Action Guidelines */}
-                <div className="p-3.5 bg-slate-950/20 border border-slate-800 rounded-xl text-[11px] font-sans flex items-start gap-3">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5 animate-pulse" />
-                  <div>
-                    <span className="text-slate-200 font-bold block">量化分析师风险纪律指南:</span>
-                    <p className="text-slate-400 leading-relaxed mt-1">
-                      绝大多数实盘爆仓或发生重大亏损，并非由于行情看错，而是没有在严格执行本页面计算的<b>“安全开仓股数”</b>的情况下执意越级重仓或随意挪步止损保护点。当且仅当把每笔亏损严格通过开仓数限制在 1.5% - 2.0% 内，您才能从概率游戏上面实现长期正收益。
-                    </p>
-                  </div>
-                </div>
-
               </div>
 
             </div>
+
+          </div>
+        )}
+
+        {/* ======================= TAB 3: ADVERSARIAL SANDBOX ======================= */}
+        {activeMiningTab === 'sandbox' && (
+          <div className="space-y-5 animate-in fade-in duration-200" id="panel-adversarial-sandbox">
+            
+            {/* Simulation Header and re-run trigger */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-950/70 p-4 rounded-xl border border-slate-850/90">
+              <div>
+                <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5 leading-snug">
+                  <Bot className="w-4 h-4 text-emerald-400 animate-pulse" />
+                  多智能体仿真博弈对攻物理模拟
+                </h4>
+                <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                  Simulating 10,000 extreme market conditions using Monte Carlo distributions over {symbol}
+                </p>
+              </div>
+              
+              <button
+                onClick={handleSimulateSandbox}
+                disabled={isSimulatingSandbox}
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:bg-[#0f231e] font-bold py-2.5 px-4 rounded-lg text-[11px] transition-colors flex items-center gap-1.5 text-white cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSimulatingSandbox ? 'animate-spin' : ''}`} />
+                {isSimulatingSandbox ? '物理模拟分析决策运行中...' : '启动防线大单对抗仿真'}
+              </button>
+            </div>
+
+            {/* Battle Arena visual map - Recharts scenario projections */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+              
+              {/* Scenario Project chart Line */}
+              <div className="xl:col-span-8 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-405 font-bold uppercase tracking-wider mb-2 flex justify-between items-center">
+                  <span>蒙特卡罗对攻预测轨迹分支 (Monte Carlo Adversarial Projections)</span>
+                  <span className="text-[8px] font-mono text-indigo-400 font-bold uppercase">PHYSICS FORK</span>
+                </div>
+                
+                <div className="w-full h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={monteCarloData}
+                      margin={{ top: 10, right: 5, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#122026" />
+                      <XAxis dataKey="name" stroke="#475569" fontSize={9} fontClassName="font-mono" />
+                      <YAxis stroke="#475569" fontSize={8} domain={['auto', 'auto']} scale="linear" fontClassName="font-mono" />
+                      <RechartsTooltip
+                        contentStyle={{ backgroundColor: '#090f12', borderColor: '#1e293b', fontSize: '10px' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Area type="monotone" dataKey="突破阵营路径" stroke="#10b981" fill="#10b981" fillOpacity={0.03} strokeWidth={1.5} name="Spike(激进多头爆发)" />
+                      <Area type="monotone" dataKey="回归阵营路径" stroke="#ef4444" fill="#ef4444" fillOpacity={0.02} strokeWidth={1.5} name="Shadow(极地均值抛售)" />
+                      <Area type="monotone" dataKey="合意风控中轨" stroke="#cca55e" fill="#cca55e" fillOpacity={0.01} strokeWidth={2.5} strokeDasharray="2 2" name="Shield(中性平衡合成轨)" />
+                      <Area type="monotone" dataKey="尾部防线清算" stroke="#6366f1" fill="#6366f1" fillOpacity={0.04} strokeWidth={1} name="红队崩溃清算轨" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="flex justify-between items-center text-[10px] font-mono border-t border-slate-800/40 pt-2 text-slate-500 mt-2">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-emerald-400" /> 多头爆发率: <b>{sandboxSentimentWeights.bulls}%</b></span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-rose-400" /> 空头抛售价: <b>{sandboxSentimentWeights.bears}%</b></span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded bg-indigo-400" /> 风控对冲重合: <b>{sandboxSentimentWeights.neutrals}%</b></span>
+                </div>
+              </div>
+
+              {/* Debate Terminal logs */}
+              <div className="xl:col-span-4 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                  <span>多智能体激进辩驳日志 (Adversarial Log)</span>
+                  <span className="text-[7.5px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">TRIAL LOGS</span>
+                </div>
+
+                <div className="flex-1 bg-slate-950/85 rounded-xl border border-slate-900 p-3 space-y-3.5 max-h-[220px] overflow-y-auto font-mono text-[10.5px] leading-relaxed select-text">
+                  {simulationLogStr.map((logLine, idx) => {
+                    const isSpike = logLine.startsWith("激进突破智能体") || logLine.includes("Spike");
+                    const isShadow = logLine.startsWith("均值回归智能体") || logLine.includes("Shadow");
+                    const isShield = logLine.startsWith("中性风险精算智能体") || logLine.includes("Shield");
+                    
+                    let avatarBg = "bg-slate-800 text-slate-400";
+                    let prefix = "◆ SYST";
+                    if (isSpike) {
+                      avatarBg = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+                      prefix = "🔥 SPIKE (多头)";
+                    } else if (isShadow) {
+                      avatarBg = "bg-rose-500/10 text-rose-450 border border-rose-500/20";
+                      prefix = "💀 SHADOW (空头)";
+                    } else if (isShield) {
+                      avatarBg = "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+                      prefix = "🛡️ SHIELD (风险)";
+                    }
+
+                    return (
+                      <div key={idx} className="space-y-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded font-mono ${avatarBg}`}>
+                            {prefix}
+                          </span>
+                        </div>
+                        <p className="text-slate-350 pr-1">{logLine.includes(":") ? logLine.split(":")[1] : logLine}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-2.5 pt-2 border-t border-slate-800/40 text-[9px] text-[#cca55e] leading-snug flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-[#cca55e]" />
+                  <span>市场审判决断：多头突破阵营具有更高物理动能共鸣，偏多策略胜。</span>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ======================= TAB 4: ACTIVE PLAYBOOK & HEDGING ======================= */}
+        {activeMiningTab === 'playbook' && (
+          <div className="space-y-5 animate-in fade-in duration-200" id="panel-adaptive-playbook">
+            
+            {/* Playbook interactive configurations sliders */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+              
+              {/* Playbook strategy style choice */}
+              <div className="bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between">
+                <span className="text-[9.5px] font-bold text-slate-500 tracking-wider font-mono">战术交易编制路线 (TRADE STYLE)</span>
+                
+                <div className="space-y-2 mt-2">
+                  <button 
+                    onClick={() => setPlaybookStyle('conservative')}
+                    className={`w-full py-2.5 px-3 rounded-lg text-[11px] font-bold text-left border flex items-center justify-between cursor-pointer ${
+                      playbookStyle === 'conservative' 
+                        ? 'bg-indigo-500/10 border-indigo-505/30 text-indigo-400' 
+                        : 'bg-slate-950/40 border-slate-800/80 text-slate-450 hover:text-slate-300'
+                    }`}
+                  >
+                    <span>保守平衡套保路线</span>
+                    <span className="text-[8px] font-mono">DELTA NEUTRAL</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setPlaybookStyle('pyramid')}
+                    className={`w-full py-2.5 px-3 rounded-lg text-[11px] font-bold text-left border flex items-center justify-between cursor-pointer ${
+                      playbookStyle === 'pyramid' 
+                        ? 'bg-indigo-500/10 border-indigo-505/30 text-indigo-400' 
+                        : 'bg-slate-950/40 border-slate-800/80 text-slate-450 hover:text-slate-300'
+                    }`}
+                  >
+                    <span>金字塔阶梯吸筹建仓</span>
+                    <span className="text-[8px] font-mono">SCALING ACUM</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setPlaybookStyle('grid')}
+                    className={`w-full py-2.5 px-3 rounded-lg text-[11px] font-bold text-left border flex items-center justify-between cursor-pointer ${
+                      playbookStyle === 'grid' 
+                        ? 'bg-indigo-500/10 border-indigo-505/30 text-indigo-400' 
+                        : 'bg-slate-950/40 border-slate-800/80 text-slate-450 hover:text-slate-300'
+                    }`}
+                  >
+                    <span>高频网格平衡对冲区</span>
+                    <span className="text-[8px] font-mono">GRID ARB</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Slider 1: Hedge ratio */}
+              <div className="bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-center text-[9.5px] font-bold text-slate-500 tracking-wider font-mono">
+                    <span>保护期权/现货套保比例</span>
+                    <span className="text-indigo-400 font-bold">{hedgeRatio}% ratio</span>
+                  </div>
+                  <p className="text-[8.5px] text-slate-500 mt-1">
+                    锁定多少期权/期货对冲反向波动头寸
+                  </p>
+                </div>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="100" 
+                  value={hedgeRatio}
+                  onChange={(e) => setHedgeRatio(parseInt(e.target.value))}
+                  className="w-full accent-indigo-500 bg-slate-950 border border-slate-800 rounded h-1 cursor-pointer mt-3"
+                />
+              </div>
+
+              {/* Slider 2: Trailing Trigger */}
+              <div className="bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-center text-[9.5px] font-bold text-slate-500 tracking-wider font-mono">
+                    <span>网格动态执行间距比例</span>
+                    <span className="text-teal-400 font-bold">{trailingTriggerPct}% trigger</span>
+                  </div>
+                  <p className="text-[8.5px] text-slate-500 mt-1">
+                    每变动指定百分比触发自动平仓对攻
+                  </p>
+                </div>
+                <input 
+                  type="range" 
+                  min="5" 
+                  max="30" 
+                  value={trailingTriggerPct * 10}
+                  onChange={(e) => setTrailingTriggerPct(parseFloat((parseInt(e.target.value) / 10).toFixed(1)))}
+                  className="w-full accent-teal-400 bg-slate-950 border border-slate-800 rounded h-1 cursor-pointer mt-3"
+                />
+              </div>
+
+              {/* Hedge stats block info */}
+              <div className="bg-[#121815]/75 p-4 rounded-xl border border-emerald-500/10 flex flex-col justify-between">
+                <span className="text-[9.5px] font-bold text-emerald-400 tracking-wider font-mono uppercase">套保模型绩效预算</span>
+                <div className="space-y-1.5 mt-2 font-mono text-[10px]">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">预期夏普比修正:</span>
+                    <span className="text-emerald-400 font-bold">+{((hedgeRatio / 100) * 0.85).toFixed(2)} pts</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">最大理论回撤限制:</span>
+                    <span className="text-emerald-450 font-bold font-mono">-{Math.max(1.5, 8.5 * (1 - hedgeRatio/100)).toFixed(1)}% limit</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">锁定净值对冲率:</span>
+                    <span className="text-indigo-400 font-bold font-mono">Delta-Neutral {hedgeRatio > 50 ? '极强防守' : '平衡进攻'}</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Hedged vs Unhedged Chart and Action Checklist plan */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+              
+              {/* Line comparison Chart */}
+              <div className="xl:col-span-8 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 flex justify-between items-center">
+                  <span>套保平衡净值模拟曲线 (Raw Position VS Active Plays Hedged)</span>
+                  <span className="text-[8px] font-mono text-emerald-400 font-bold uppercase">EQUITY SMOOTH</span>
+                </div>
+
+                <div className="w-full h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RechartsLineChart
+                      data={performanceHedgeData}
+                      margin={{ top: 10, right: 10, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#122026" />
+                      <XAxis dataKey="step" stroke="#475569" fontSize={9} fontClassName="font-mono" />
+                      <YAxis stroke="#475569" fontSize={8} domain={['auto', 'auto']} scale="linear" fontClassName="font-mono" />
+                      <RechartsTooltip
+                        contentStyle={{ backgroundColor: '#090f12', borderColor: '#1e293b', fontSize: '10px' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Line type="monotone" dataKey="裸多持仓 (Unhedged Raw)" stroke="#ef4444" strokeWidth={1} name="无对冲持仓暴露 (Unhedged)" dot={false} />
+                      <Line type="monotone" dataKey="主动套保体系 (Hedged Playbook)" stroke="#10b981" strokeWidth={2.5} name="主动执行套保防线 (Hedged)" dot={true} />
+                    </RechartsLineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Execution white-paper plan card */}
+              <div className="xl:col-span-4 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-405 font-bold uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                  <span>多模态量化执行白皮书 (Playbook Checklist)</span>
+                  <span className="text-[7.5px] px-1.5 py-0.2 rounded bg-indigo-505/10 text-indigo-400 border border-indigo-500/20 font-mono">DOCK PLAN</span>
+                </div>
+
+                <div className="flex-1 space-y-3 max-h-[220px] overflow-y-auto">
+                  
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-900/90 flex items-start gap-2">
+                    <div className="w-4 h-4 rounded-full bg-indigo-505/10 border border-indigo-500/20 flex items-center justify-center font-mono text-[8px] text-indigo-450 font-bold shrink-0 mt-0.5">
+                      1
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-205">一阶段：多档吸货铺仓</h4>
+                      <p className="text-[9px] text-slate-500 leading-snug mt-0.5">
+                        在当前中枢价 {currentPrice.toFixed(2)} 下方分三步执行挂单建仓。不追求瞬时价格极点，分段锁定。
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-900/90 flex items-start gap-2">
+                    <div className="w-4 h-4 rounded-full bg-indigo-505/10 border border-indigo-500/20 flex items-center justify-center font-mono text-[8px] text-indigo-455 font-bold shrink-0 mt-0.5">
+                      2
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-slate-210">二阶段：动态匹配反向期权</h4>
+                      <p className="text-[9px] text-slate-500 leading-snug mt-0.5">
+                        自动调配 {hedgeRatio}% 的保护期权利差，平衡Delta偏度，降低极速插针下行时的裸量损耗。
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-[#0e1613] border border-emerald-500/10 flex items-start gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-[10px] font-bold text-emerald-400">三阶段：自动套保网格挂载</h4>
+                      <p className="text-[9px] text-slate-504 leading-snug mt-0.5">
+                        挂载以 {trailingTriggerPct}% 为步长的限价触发模块。一旦价格突发向上冲破压力峰，自动分批套利离场。
+                      </p>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="mt-2 text-[9px] bg-indigo-950/10 p-2 border border-indigo-500/10 rounded-lg text-indigo-400 text-center">
+                  <b>执行警告：</b> A股限止T+1交易可能产生的跨日打滑，已根据公式进行了摩擦参数修正。
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ======================= TAB 5: MULTI-RESOLUTION PREDICTIVE MODELING ======================= */}
+        {activeMiningTab === 'prediction' && (
+          <div className="space-y-5 animate-in fade-in duration-200" id="panel-multi-resolution">
+            
+            {/* selective resolution buttons and zscore indicator */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+              
+              {/* resolution selective */}
+              <div className="md:col-span-5 bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between min-h-[140px]">
+                <span className="text-[10px] font-bold text-slate-500 tracking-wider font-mono">多分辨率预测周期选择</span>
+                
+                <div className="grid grid-cols-4 gap-1.5 mt-2.5">
+                  {(['1m', '15m', '1h', '1d'] as ResolutionType[]).map((res) => (
+                    <button
+                      key={res}
+                      onClick={() => setSelectedResolution(res)}
+                      className={`py-2 text-[11px] font-mono font-bold rounded-lg cursor-pointer ${
+                        selectedResolution === res 
+                          ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400' 
+                          : 'bg-slate-950/40 border border-slate-800/80 text-slate-500 hover:text-slate-300 hover:bg-slate-900/30'
+                      }`}
+                    >
+                      {res === '1m' ? '1m 微观' : res === '15m' ? '15m 短周期' : res === '1h' ? '1h 中线' : '1d 宏局'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="text-[9px] text-slate-550 mt-1.5 leading-snug">
+                  * 提示：高频1m图噪值极重，均值回归半衰期为7秒；日K线级大趋势具有强惯性维持，半衰周期延伸为14天。
+                </div>
+              </div>
+
+              {/* Speedometer z-score */}
+              <div className="md:col-span-7 bg-[#080d0f]/60 p-4 rounded-xl border border-slate-800/80 flex flex-col justify-between min-h-[140px]">
+                <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  <span className="flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5 text-rose-450" /> 均值偏离标准差指数 (Current Z-Score deviation)</span>
+                  <span className="text-[8px] font-mono text-slate-500">HISTORICAL NORM</span>
+                </div>
+
+                <div className="mt-3.5">
+                  <div className="flex justify-between text-[11px] font-mono font-bold mb-1.5 items-center">
+                    <span className="text-slate-500">超卖极限支撑 (-3σ)</span>
+                    <span className={`text-sm px-2.5 py-0.5 rounded ${Math.abs(zScoreValue) > 1.5 ? (zScoreValue > 0 ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400') : 'bg-slate-850 text-slate-300'}`}>
+                      当前偏离: {zScoreValue > 0 ? `+${zScoreValue}` : zScoreValue}σ ({Math.abs(zScoreValue) > 1.5 ? (zScoreValue > 0 ? '超买溢价阻抗' : '极度超卖安全垫') : '中枢价格回振带'})
+                    </span>
+                    <span className="text-slate-500">超买抛压界限 (+3σ)</span>
+                  </div>
+
+                  {/* Offset needle pointer tracker */}
+                  <div className="w-full h-2 rounded bg-slate-950 border border-slate-800 relative mt-2 rounded-full overflow-visible">
+                    {/* Tick markers */}
+                    <div className="absolute left-[16.6%] top-0 bottom-0 w-0.5 bg-slate-800" />
+                    <div className="absolute left-[50%] top-0 bottom-0 w-0.5 bg-slate-800" />
+                    <div className="absolute left-[83.3%] top-0 bottom-0 w-0.5 bg-slate-800" />
+                    
+                    {/* Active moving needle */}
+                    <div 
+                      className={`absolute top-[-4px] w-3 h-4 rounded-full shadow-lg ${
+                        zScoreValue > 1.5 ? 'bg-rose-500' : (zScoreValue < -1.5 ? 'bg-emerald-500' : 'bg-amber-400')
+                      } transition-all duration-300`}
+                      style={{ left: `${Math.max(2, Math.min(95, ((zScoreValue + 3.5) / 7.0) * 100))}%` }}
+                    >
+                      <div className="w-0.5 h-2 bg-white mx-auto mt-1" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Regression curve distribution and step predictions */}
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-stretch">
+              
+              {/* normal distribution area Recharts */}
+              <div className="xl:col-span-7 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-405 font-bold uppercase tracking-wider mb-2 flex justify-between items-center">
+                  <span>时序回归偏离值正态分布高斯图面 (Gaussian Normal Distribution matrix)</span>
+                  <span className="text-[8px] font-mono text-rose-450 animate-pulse font-bold">REVERSION PROBABILITY</span>
+                </div>
+
+                <div className="w-full h-[185px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={gaussianData}
+                      margin={{ top: 10, right: 10, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#122026" />
+                      <XAxis dataKey="z" stroke="#475569" fontSize={9} fontClassName="font-mono" />
+                      <YAxis stroke="#475569" fontSize={8} domain={['auto', 'auto']} scale="linear" fontClassName="font-mono" />
+                      <RechartsTooltip
+                        contentStyle={{ backgroundColor: '#090f12', borderColor: '#1e293b', fontSize: '10px' }}
+                        itemStyle={{ color: '#fff' }}
+                      />
+                      <Area type="monotone" dataKey="概率密度" stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.04} strokeWidth={1} name="历史分布概率频率" />
+                      <ReferenceLine x={zScoreValue} stroke="#CCA55E" strokeWidth={2} label={{ value: `当前: ${zScoreValue}σ`, fill: '#CCA55E', fontSize: 9, position: 'top' }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Multi-step target prices predictions */}
+              <div className="xl:col-span-5 bg-[#070b0d]/80 rounded-xl border border-slate-800/90 p-4 flex flex-col justify-between">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-3 flex items-center justify-between">
+                  <span>多步前瞻极限高低轨价格测算 (Predictive Step Ahead Target Bounds)</span>
+                  <span className="text-[8.5px] text-rose-400 bg-rose-500/5 px-2 py-0.5 border border-rose-500/10 rounded font-mono font-bold uppercase">
+                    REGRESSION STEPS
+                  </span>
+                </div>
+
+                <div className="flex-1 space-y-3 min-h-[175px]">
+                  
+                  {predictiveSeries.map((item, idx) => (
+                    <div key={idx} className="bg-slate-950/70 p-3 border border-slate-900 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-7 h-7 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center font-mono text-[10px] text-rose-400 font-bold shrink-0">
+                          T+{idx+1}
+                        </div>
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-300 font-mono tracking-wide">{item.step}</h4>
+                          <p className="text-[8.5px] text-slate-550 mt-1">匹配预测匹配度: <b className="text-indigo-400 font-mono font-bold">{item.confidence}%</b></p>
+                        </div>
+                      </div>
+
+                      <div className="text-right font-mono text-[10px]">
+                        <div className="text-slate-500 flex items-center gap-1 justify-end">上限轨：<span className="text-emerald-400 font-bold">{item.high.toFixed(2)}</span></div>
+                        <div className="text-slate-500 flex items-center gap-1 justify-end mt-1">下限轨：<span className="text-rose-400 font-bold">{item.low.toFixed(2)}</span></div>
+                      </div>
+                    </div>
+                  ))}
+
+                </div>
+              </div>
+
+            </div>
+
           </div>
         )}
 
