@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Activity, Clock, Menu, Search, TrendingUp, TrendingDown, X, Trash2, Plus, Loader2, BarChart2, ChevronUp, ChevronDown, Edit2, Check, Navigation, Target, ShieldAlert, Layers, Lock, Unlock, HelpCircle, Camera, Image as ImageIcon } from 'lucide-react';
+import { Activity, Clock, Menu, Search, TrendingUp, TrendingDown, X, Trash2, Plus, Loader2, BarChart2, ChevronUp, ChevronDown, Edit2, Check, Navigation, Target, ShieldAlert, Layers, Lock, Unlock, HelpCircle, Camera, Image as ImageIcon, RotateCw } from 'lucide-react';
 import StockChart from './components/StockChart';
 import AnalysisCard from './components/AnalysisCard';
 import BacktestModal from './components/BacktestModal';
@@ -38,6 +38,7 @@ const App: React.FC = () => {
   // Price Editing State
   const [isEditingPrice, setIsEditingPrice] = useState(false);
   const [isPriceManuallySet, setIsPriceManuallySet] = useState(false); // NEW: Track if user locked the price
+  const [isRefreshingPrice, setIsRefreshingPrice] = useState(false); // NEW: Track manual refresh loading state
   const [tempPriceInput, setTempPriceInput] = useState('');
   const priceInputRef = useRef<HTMLInputElement>(null);
 
@@ -117,6 +118,7 @@ const App: React.FC = () => {
   };
 
   const refreshPriceForce = async () => {
+    setIsRefreshingPrice(true);
     try {
         const freshData = await lookupStockSymbol(selectedSymbol.symbol);
         if (freshData && freshData.currentPrice > 0) {
@@ -124,9 +126,14 @@ const App: React.FC = () => {
             setWatchlist(prev => prev.map(s => 
                 s.symbol === selectedSymbol.symbol ? { ...s, currentPrice: freshData.currentPrice } : s
             ));
+            if (isEditingPrice) {
+                setTempPriceInput(freshData.currentPrice.toString());
+            }
         }
     } catch (e) {
         console.error("Force refresh failed", e);
+    } finally {
+        setIsRefreshingPrice(false);
     }
   };
 
@@ -510,6 +517,15 @@ const App: React.FC = () => {
                     </span>
                     <span className="sm:hidden">{isPriceManuallySet ? "LOCK" : "LIVE"}</span>
                     
+                    <button 
+                      onClick={refreshPriceForce} 
+                      disabled={isRefreshingPrice}
+                      className="text-slate-500 hover:text-emerald-400 disabled:opacity-50 transition-all p-1 hover:bg-slate-800 rounded flex items-center justify-center font-bold" 
+                      title="刷新实时价格"
+                    >
+                      <RotateCw className={`w-2.5 h-2.5 ${isRefreshingPrice ? 'animate-spin text-emerald-400' : ''}`} />
+                    </button>
+                    
                     {!isEditingPrice && !isPriceManuallySet && (
                       <button onClick={startEditingPrice} className="text-gray-600 hover:text-blue-400 transition-colors p-0.5" title="手动校准"><Edit2 className="w-2.5 h-2.5" /></button>
                     )}
@@ -555,8 +571,17 @@ const App: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               
               {/* TIMEFRAME SELECTOR (GROUPED) */}
-              <div className="flex flex-wrap gap-2 items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800 shadow-sm w-fit">
+              <div className="flex flex-wrap gap-2 items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 shadow-sm w-fit">
                 
+                {/* Timeframe Icon Indicator */}
+                <div className="flex items-center gap-1.5 px-2 text-slate-400">
+                    <Clock className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">图表周期</span>
+                </div>
+                
+                {/* Divider */}
+                <div className="w-px h-5 bg-slate-800"></div>
+
                 {/* Minute Group */}
                 <div className="flex gap-1">
                     {minuteTimeframes.map((tf) => (
