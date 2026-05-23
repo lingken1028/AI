@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { AIAnalysis, SignalType, RedTeaming, TradingSetup, TrinityConsensus, SmartMoneyAnalysis, DataMining, CorrelationMatrix, CatalystRadar, TrendResonance, MarketTribunal, TribunalArgument, WyckoffData, VolumeProfile, SMCData, OptionsData, SentimentDivergence, VolatilityAnalysis, HardData, SocialAnalysis } from '../types';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip } from 'recharts';
+import { AIAnalysis, SignalType, RedTeaming, TradingSetup, TrinityConsensus, SmartMoneyAnalysis, DataMining, CorrelationMatrix, CatalystRadar, TrendResonance, MarketTribunal, TribunalArgument, WyckoffData, VolumeProfile, SMCData, OptionsData, SentimentDivergence, VolatilityAnalysis, HardData, SocialAnalysis, Timeframe } from '../types';
 import { formatCurrency } from '../constants';
 import { TrendingUp, TrendingDown, Minus, ShieldAlert, Target, Activity, Zap, Globe, Bot, History, Loader2, BrainCircuit, Crosshair, CheckCircle2, ListChecks, CandlestickChart, Users, Cpu, AlertTriangle, ArrowRight, Gauge, BarChart3, Layers, Lock, Unlock, Terminal, Quote, Navigation, GitMerge, Sliders, Radar, Radio, BarChart4, ShieldCheck, Check, Search, Siren, HelpCircle, ArrowUpRight, ArrowDownRight, Briefcase, BarChart2, GitCommit, ChevronRight, PenTool, AlertOctagon, Scale, Wallet, LineChart, Eye, ScanLine, Database, Server, Network, Coins, Landmark, Sparkles, Link2, CalendarClock, ArrowBigUp, ArrowBigDown, Gavel, Scale as ScaleIcon, ThumbsUp, ThumbsDown, AlertCircle, BarChart, Magnet, ZapOff, Waves, ArrowDown, Map, CheckCircle, Filter } from 'lucide-react';
 
@@ -9,6 +10,7 @@ interface AnalysisCardProps {
   error?: string | null;
   onAnalyze: () => void;
   symbol: string;
+  timeframe?: Timeframe;
 }
 
 // FIX: Deterministic Typewriter to prevent character duplication stutter
@@ -70,27 +72,170 @@ const translateTerm = (term: string | undefined): string => {
   return term; 
 };
 
+const generateDivergenceData = (symbol: string, correlation?: CorrelationMatrix, signal?: SignalType, timeframe?: Timeframe) => {
+    const symbolStr = symbol.trim().toUpperCase();
+    const refAsset = correlation?.correlatedAsset || "SPY";
+    
+    // Create a deterministic hash from the symbol name to seed some variation
+    let hash = 0;
+    for (let i = 0; i < symbolStr.length; i++) {
+        hash = symbolStr.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const absHash = Math.abs(hash);
+    
+    // Base returns
+    const points = 12;
+    const data: any[] = [];
+    
+    let assetVal = 0;
+    let refVal = 0;
+    
+    // Signal-based divergence bias
+    // BUY: Asset outperforms reference (diverging upwards)
+    // SELL: Asset underperforms reference (diverging downwards)
+    // NEUTRAL: moving closely
+    const divergenceBias = signal === SignalType.BUY ? 0.45 : (signal === SignalType.SELL ? -0.45 : 0.05);
+
+    // Adaptive date/time labels starting from today trailing backwards
+    const names: string[] = [];
+    const baseDate = new Date();
+    
+    for (let i = 0; i < points; i++) {
+        const stepsAgo = points - 1 - i;
+        if (timeframe === Timeframe.D1) {
+            // Daily interval - e.g., "05/20"
+            const currentStepDate = new Date(baseDate.getTime() - stepsAgo * 24 * 60 * 60 * 1000);
+            const rawMonth = currentStepDate.getMonth() + 1;
+            const rawDay = currentStepDate.getDate();
+            names.push(`${String(rawMonth).padStart(2, '0')}/${String(rawDay).padStart(2, '0')}`);
+        } else {
+            // Intraday intervals - determine relative step width in minutes
+            let stepMinutes = 15;
+            switch (timeframe) {
+                case Timeframe.M1: stepMinutes = 1; break;
+                case Timeframe.M3: stepMinutes = 3; break;
+                case Timeframe.M5: stepMinutes = 5; break;
+                case Timeframe.M15: stepMinutes = 15; break;
+                case Timeframe.M30: stepMinutes = 30; break;
+                case Timeframe.H1: stepMinutes = 60; break;
+                case Timeframe.H2: stepMinutes = 120; break;
+                case Timeframe.H4: stepMinutes = 240; break;
+                default: stepMinutes = 15;
+            }
+            const currentStepDate = new Date(baseDate.getTime() - stepsAgo * stepMinutes * 60 * 1000);
+            const hourStr = String(currentStepDate.getHours()).padStart(2, '0');
+            const minStr = String(currentStepDate.getMinutes()).padStart(2, '0');
+            names.push(`${hourStr}:${minStr}`);
+        }
+    }
+    
+    for (let i = 0; i < points; i++) {
+        // Deterministic movements
+        const x = i / (points - 1); // 0 to 1
+        const marketTrend = Math.sin(x * Math.PI * 1.5 + (absHash % 5)) * 1.5;
+        const refChange = marketTrend + Math.cos(x * 3) * 0.5;
+        refVal += refChange;
+        
+        // Co-movement of selected asset with standard variation + widening signal bias
+        const assetChange = refChange + (divergenceBias * x * 2.5) + (Math.sin(x * 8) * 0.3);
+        assetVal += assetChange;
+        
+        const assetPct = Number(assetVal.toFixed(2));
+        const refPct = Number(refVal.toFixed(2));
+        const divergence = Number((assetPct - refPct).toFixed(2));
+        
+        data.push({
+            name: names[i] || `T${i + 1}`,
+            asset: assetPct,
+            reference: refPct,
+            divergence: divergence,
+            assetLabel: symbolStr,
+            refLabel: refAsset,
+            timeframeStr: timeframe === Timeframe.D1 ? '对应日期' : '发生时点'
+        });
+    }
+    
+    return data;
+};
+
+interface MiniDivergenceTooltipProps {
+    active?: boolean;
+    payload?: any[];
+}
+
+const MiniDivergenceTooltip = ({ active, payload }: MiniDivergenceTooltipProps) => {
+    if (active && payload && payload.length) {
+        const data = payload[0].payload;
+        const assetName = data.assetLabel;
+        const refName = data.refLabel;
+        
+        // Find asset and reference values dynamically by checking their dataKey property
+        const assetItem = payload.find(p => p.dataKey === 'asset');
+        const refItem = payload.find(p => p.dataKey === 'reference');
+        
+        const assetVal = assetItem ? assetItem.value : 0;
+        const refVal = refItem ? refItem.value : 0;
+        
+        const divVal = data.divergence;
+        const timeLabel = data.name;
+        const timeframeStr = data.timeframeStr || '发生时点';
+        
+        return (
+            <div className="bg-[#0b1215] border border-gray-850 p-2.5 rounded-lg text-[9px] font-mono text-gray-300 shadow-2xl flex flex-col gap-1 pointer-events-none z-50 min-w-[135px]">
+                <div className="text-[8.5px] text-gray-500 border-b border-gray-800/80 pb-1 mb-1 flex justify-between font-bold">
+                    <span>{timeframeStr}:</span>
+                    <span className="text-blue-400 font-extrabold">{timeLabel}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                    <span className="text-gray-400 font-bold truncate max-w-[80px]">{assetName}:</span>
+                    <span className={assetVal >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                        {assetVal > 0 ? `+${assetVal}` : assetVal}%
+                    </span>
+                </div>
+                <div className="flex justify-between gap-4">
+                    <span className="text-gray-400 font-bold truncate max-w-[80px]">{refName}:</span>
+                    <span className={refVal >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                        {refVal > 0 ? `+${refVal}` : refVal}%
+                    </span>
+                </div>
+                <div className="w-full h-px bg-gray-800/60 my-1"></div>
+                <div className="flex justify-between gap-4 text-blue-400 font-bold">
+                    <span>背离 (Div):</span>
+                    <span className={divVal >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                        {divVal > 0 ? `+${divVal}` : divVal}%
+                    </span>
+                </div>
+            </div>
+        );
+    }
+    return null;
+};
+
 // Driver Item Component
 const ScoreDriverItem = ({ label, weight, score, color, icon }: { label: string, weight: number, score: number, color: string, icon: React.ReactNode }) => {
-    const contribution = (score * (weight / 100)).toFixed(1);
+    const safeScore = typeof score === 'number' ? score : (parseFloat(score as any) || 0);
+    const contribution = (safeScore * (weight / 100)).toFixed(1);
 
     return (
-        <div className="flex flex-col gap-1.5 bg-[#1a232e] p-2.5 rounded-lg border border-gray-800 hover:border-gray-700 transition-colors shadow-sm">
-            <div className="flex justify-between items-center text-[10px] uppercase font-bold text-gray-500">
+        <div className="flex flex-col gap-1.5 bg-[#0b1215]/80 hover:bg-[#121921]/90 p-3 rounded-xl border border-gray-800/80 hover:border-blue-500/25 transition-all duration-300 shadow-sm group">
+            <div className="flex justify-between items-center text-[10px] uppercase font-bold text-gray-400 group-hover:text-white transition-colors">
                 <span className="flex items-center gap-1.5">{icon} {label}</span>
-                <span className="opacity-50 text-[9px] font-mono">{weight}%</span>
+                <span className="opacity-40 text-[8px] font-mono bg-gray-800 px-1 py-0.2 rounded">{weight}% 权重</span>
             </div>
             
             <div className="flex items-end justify-between mt-1">
-                 <span className={`text-xl font-bold font-mono leading-none ${color}`}>{score}</span>
-                 <span className="text-[9px] text-gray-600 font-mono mb-0.5">+{contribution}%</span>
+                 <span className={`text-2xl font-black font-mono leading-none tracking-tight ${color}`}>{safeScore}</span>
+                 <div className="text-right">
+                     <span className="text-[8px] text-gray-500 block leading-tight">贡献度 Score</span>
+                     <span className="text-[10px] text-gray-300 font-mono font-bold">+{contribution}%</span>
+                 </div>
             </div>
             
             {/* Progress Bar */}
-            <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden mt-1">
+            <div className="h-1.5 w-full bg-gray-900 rounded-full overflow-hidden mt-1.5 relative">
                 <div 
                     className={`h-full rounded-full ${color.replace('text-', 'bg-')} transition-all duration-1000 ease-out`} 
-                    style={{ width: `${score}%` }}
+                    style={{ width: `${Math.min(100, Math.max(0, safeScore))}%` }}
                 ></div>
             </div>
         </div>
@@ -238,8 +383,9 @@ const SocialRadarPanel = ({ social }: { social: SocialAnalysis }) => {
 const VolatilityRegimeCard = ({ volatility }: { volatility?: VolatilityAnalysis }) => {
     if (!volatility) return null;
 
-    const isHighVol = volatility.regime.includes('High') || volatility.regime.includes('Trend');
-    const isLowVol = volatility.regime.includes('Low') || volatility.regime.includes('Choppy');
+    const regimeStr = volatility.regime || '';
+    const isHighVol = regimeStr.includes('High') || regimeStr.includes('Trend');
+    const isLowVol = regimeStr.includes('Low') || regimeStr.includes('Choppy');
     const regimeColor = isHighVol ? 'text-blue-400 border-blue-500/30' : isLowVol ? 'text-yellow-400 border-yellow-500/30' : 'text-red-400 border-red-500/30';
     const bgEffect = isHighVol ? 'bg-blue-900/10' : isLowVol ? 'bg-yellow-900/10' : 'bg-red-900/10';
 
@@ -250,7 +396,7 @@ const VolatilityRegimeCard = ({ volatility }: { volatility?: VolatilityAnalysis 
                     <Waves className="w-3 h-3" /> 波动率体制 (Volatility Regime)
                 </h3>
                 <span className={`text-[9px] px-2 py-0.5 rounded font-bold border ${regimeColor} bg-[#0b1215]/50`}>
-                    {volatility.regime}
+                    {regimeStr}
                 </span>
             </div>
 
@@ -323,9 +469,9 @@ const OptionsDashboard = ({ options, currentPrice }: { options?: OptionsData, cu
                          <div className="absolute top-0 bottom-0 w-1 bg-yellow-500 z-10 left-1/2"></div>
                     </div>
                     <div className="flex justify-between text-[8px] text-gray-500 mt-1">
-                        <span>当前价</span>
+                        <span>偏低</span>
                         <span>痛点</span>
-                        <span>当前价</span>
+                        <span>偏高</span>
                     </div>
                 </div>
 
@@ -333,17 +479,17 @@ const OptionsDashboard = ({ options, currentPrice }: { options?: OptionsData, cu
                 <div className="space-y-2">
                     <div className="flex justify-between items-center bg-[#151c24] p-1.5 rounded border border-gray-800/50">
                         <span className="text-[9px] text-gray-500 font-bold">Gamma 敞口</span>
-                        <span className={`text-[9px] font-bold ${options.gammaExposure.includes('Short') ? 'text-red-400' : 'text-green-400'}`}>
-                            {options.gammaExposure.includes('Short') ? '做空 (-GEX)' : '做多 (+GEX)'}
+                        <span className={`text-[9px] font-bold ${(options.gammaExposure || '').includes('Short') ? 'text-red-400' : 'text-green-400'}`}>
+                            {(options.gammaExposure || '').includes('Short') ? '做空 (-GEX)' : '做多 (+GEX)'}
                         </span>
                     </div>
                     <div className="flex justify-between items-center bg-[#151c24] p-1.5 rounded border border-gray-800/50">
                         <span className="text-[9px] text-gray-500 font-bold">P/C 比率</span>
-                        <span className={`text-[9px] font-bold font-mono ${options.putCallRatio > 1 ? 'text-red-400' : 'text-green-400'}`}>
-                            {options.putCallRatio.toFixed(2)}
+                        <span className={`text-[9px] font-bold font-mono ${(options.putCallRatio || 0) > 1 ? 'text-red-400' : 'text-green-400'}`}>
+                            {typeof options.putCallRatio === 'number' ? options.putCallRatio.toFixed(2) : options.putCallRatio || '--'}
                         </span>
                     </div>
-                     <div className="flex justify-between items-center bg-[#151c24] p-1.5 rounded border border-gray-800/50">
+                    <div className="flex justify-between items-center bg-[#151c24] p-1.5 rounded border border-gray-800/50">
                         <span className="text-[9px] text-gray-500 font-bold">IV 排名</span>
                         <span className="text-[9px] font-bold text-blue-300 truncate max-w-[80px]">
                             {options.impliedVolatilityRank}
@@ -359,8 +505,12 @@ const OptionsDashboard = ({ options, currentPrice }: { options?: OptionsData, cu
 const SentimentDivergenceMeter = ({ divergence }: { divergence?: SentimentDivergence }) => {
     if (!divergence) return null;
 
-    const isBearishDiv = divergence.divergenceStatus.includes('Bearish');
-    const isBullishDiv = divergence.divergenceStatus.includes('Bullish');
+    const statusStr = divergence.divergenceStatus || '';
+    const isBearishDiv = statusStr.includes('Bearish');
+    const isBullishDiv = statusStr.includes('Bullish');
+
+    const retailMoodStr = divergence.retailMood || '';
+    const instActionStr = divergence.institutionalAction || '';
 
     return (
         <div className={`rounded-xl border p-4 mb-4 relative overflow-hidden ${isBearishDiv ? 'bg-red-900/5 border-red-500/20' : isBullishDiv ? 'bg-green-900/5 border-green-500/20' : 'bg-[#0b1215] border-gray-800'}`}>
@@ -369,7 +519,7 @@ const SentimentDivergenceMeter = ({ divergence }: { divergence?: SentimentDiverg
                     <Users className="w-3 h-3 text-purple-400" /> 情绪背离 (Sentiment Divergence)
                 </h3>
                 <span className={`text-[9px] px-2 py-0.5 rounded font-bold border ${isBearishDiv ? 'text-red-400 border-red-500/50 bg-red-900/20' : isBullishDiv ? 'text-green-400 border-green-500/50 bg-green-900/20' : 'text-gray-400 border-gray-600'}`}>
-                    {divergence.divergenceStatus}
+                    {statusStr}
                 </span>
              </div>
 
@@ -381,21 +531,21 @@ const SentimentDivergenceMeter = ({ divergence }: { divergence?: SentimentDiverg
                  <div className="flex-1 flex flex-col gap-1 pr-4">
                      <div className="flex justify-between text-[8px] text-gray-500 uppercase font-bold">
                          <span>Retail (散户)</span>
-                         <span className={divergence.retailMood.includes('Greed') ? 'text-red-400' : 'text-green-400'}>{divergence.retailMood}</span>
+                         <span className={retailMoodStr.includes('Greed') ? 'text-red-400' : 'text-green-400'}>{retailMoodStr || '--'}</span>
                      </div>
                      <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden flex justify-end">
-                         <div className={`h-full w-3/4 rounded-full ${divergence.retailMood.includes('Greed') ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                         <div className={`h-full w-3/4 rounded-full ${retailMoodStr.includes('Greed') ? 'bg-red-500' : 'bg-green-500'}`}></div>
                      </div>
                  </div>
 
                  {/* Institutional Bar (Left = Sell, Right = Buy) */}
                  <div className="flex-1 flex flex-col gap-1 pl-4">
                      <div className="flex justify-between text-[8px] text-gray-500 uppercase font-bold">
-                         <span className={divergence.institutionalAction.includes('Buy') ? 'text-green-400' : 'text-red-400'}>{divergence.institutionalAction}</span>
+                         <span className={instActionStr.includes('Buy') || instActionStr.includes('Accumulation') ? 'text-green-400' : 'text-red-400'}>{instActionStr || '--'}</span>
                          <span>Inst (机构)</span>
                      </div>
                       <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
-                         <div className={`h-full w-3/4 rounded-full ${divergence.institutionalAction.includes('Buy') || divergence.institutionalAction.includes('Accumulation') ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                         <div className={`h-full w-3/4 rounded-full ${instActionStr.includes('Buy') || instActionStr.includes('Accumulation') ? 'bg-green-500' : 'bg-[#dc2626]'}`}></div>
                      </div>
                  </div>
              </div>
@@ -1032,7 +1182,7 @@ const LogicConnector = ({ label, sub, color = "blue" }: { label?: string, sub?: 
     );
 };
 
-const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, onAnalyze, symbol }) => {
+const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, onAnalyze, symbol, timeframe }) => {
   const isInitialLoading = loading && !analysis;
   const isRefreshing = loading && !!analysis;
   
@@ -1152,6 +1302,8 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, o
   const signalColor = isBuy ? 'text-[#00bfa5]' : isSell ? 'text-[#ff5252]' : 'text-gray-400';
   const SignalIcon = isBuy ? TrendingUp : isSell ? TrendingDown : Minus;
   
+  const divergenceData = generateDivergenceData(symbol, analysis.correlationMatrix, analysis.signal, timeframe);
+  
   const structureColor = 
     analysis.marketStructure?.includes('Bullish') ? 'text-green-400 border-green-500/30 bg-green-500/10' :
     analysis.marketStructure?.includes('Bearish') ? 'text-red-400 border-red-500/30 bg-red-500/10' :
@@ -1185,63 +1337,24 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, o
         )}
 
         {/* 1. HEADER & VERDICT */}
-        <div className="flex justify-between items-start mb-6 pb-6 border-b border-gray-800/50">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-6 border-b border-gray-800/50">
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
                  <div className={`text-[10px] px-2.5 py-1 rounded-md font-bold border uppercase flex items-center gap-1.5 ${structureColor} shadow-sm`}>
                     <Layers className="w-3 h-3" /> {translateTerm(analysis.marketStructure)}
                  </div>
                  {/* Market Context Badge */}
                  {analysis.marketContext && <MarketBadge context={analysis.marketContext} />}
             </div>
-            <div className={`flex items-center gap-3 text-5xl font-black ${signalColor} tracking-tighter filter drop-shadow-lg`}>
+            <div className={`flex items-center gap-3 text-4xl sm:text-5xl font-black ${signalColor} tracking-tighter filter drop-shadow-lg`}>
               <SignalIcon className="w-10 h-10" />
               {analysis.signal === 'BUY' ? '做多' : analysis.signal === 'SELL' ? '做空' : '观望'}
             </div>
-            
-            {/* 2. DRIVERS */}
-            <div className="mt-4 flex flex-col gap-2">
-                <div 
-                    className="flex items-center gap-3 text-xs group relative cursor-pointer"
-                    onClick={() => setShowWinRateTip(!showWinRateTip)}
-                    onMouseEnter={() => setShowWinRateTip(true)}
-                    onMouseLeave={() => setShowWinRateTip(false)}
-                >
-                    <div className="text-gray-500 font-bold uppercase text-[10px] tracking-wide border-b border-dotted border-gray-600 flex items-center gap-1">
-                        胜率推演 (Calculated Win Rate) <HelpCircle className="w-3 h-3 text-gray-600 group-hover:text-blue-400"/>
-                    </div>
-                    <div className="h-2 w-24 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
-                        <div className={`h-full rounded-full transition-all duration-1000 ${isBuy ? 'bg-green-500' : isSell ? 'bg-red-500' : 'bg-gray-500'}`} style={{ width: `${analysis.winRate}%` }}></div>
-                    </div>
-                    <span className="font-mono font-bold text-white text-lg">{analysis.winRate}%</span>
-                    
-                    {/* Header Tooltip */}
-                     {showWinRateTip && (
-                        <div className="absolute top-full left-0 mt-2 w-56 bg-gray-900 border border-gray-700 p-3 rounded-lg z-50 text-[10px] text-gray-300 shadow-xl pointer-events-none">
-                            <strong className="text-white block mb-1">胜率计算逻辑</strong>
-                            <p className="leading-relaxed opacity-80">综合技术指标、主力资金、市场情绪及宏观环境四维因子加权计算得出。</p>
-                        </div>
-                    )}
-                </div>
-                
-                {/* Score Drivers Grid */}
-                {analysis.scoreDrivers && (
-                    <div className="mt-3">
-                        <h4 className="text-[9px] text-gray-600 font-bold uppercase mb-2 flex items-center gap-1"><Sliders className="w-3 h-3"/> 胜率归因因子 (Score Drivers)</h4>
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 w-full">
-                             <ScoreDriverItem label="技术 (Tech)" weight={40} score={analysis.scoreDrivers.technical} color="text-blue-400" icon={<Activity className="w-3 h-3"/>} />
-                             <ScoreDriverItem label="资金 (Flow)" weight={30} score={analysis.scoreDrivers.institutional} color="text-yellow-400" icon={<Wallet className="w-3 h-3"/>} />
-                             <ScoreDriverItem label="情绪 (Sent)" weight={20} score={analysis.scoreDrivers.sentiment} color="text-green-400" icon={<Users className="w-3 h-3"/>} />
-                             <ScoreDriverItem label="宏观 (Macr)" weight={10} score={analysis.scoreDrivers.macro} color="text-purple-400" icon={<Globe className="w-3 h-3"/>} />
-                        </div>
-                    </div>
-                )}
-            </div>
           </div>
           
-          <div className="text-right flex flex-col items-end gap-3">
+          <div className="flex flex-col sm:items-end gap-2.5 w-full sm:w-auto shrink-0">
               <div 
-                  className="bg-[#0b1215] p-3 rounded-xl border border-gray-800 flex flex-col items-end gap-1 group relative cursor-pointer hover:border-blue-500/30 transition-colors"
+                  className="bg-[#0b1215] p-3 rounded-xl border border-gray-800 flex flex-col items-start sm:items-end gap-1 group relative cursor-pointer hover:border-blue-500/30 transition-colors w-full sm:w-auto"
                   onClick={() => setShowHistoryTip(!showHistoryTip)}
                   onMouseEnter={() => setShowHistoryTip(true)}
                   onMouseLeave={() => setShowHistoryTip(false)}
@@ -1260,8 +1373,114 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, o
                         </div>
                     )}
               </div>
-              <div className="flex items-center gap-2 bg-[#0b1215] px-3 py-1.5 rounded-lg border border-gray-800/50"><span className="text-[9px] text-gray-500 font-bold uppercase">盈亏比 (R/R)</span><span className="text-xs font-mono font-bold text-white">{analysis.riskRewardRatio}:1</span></div>
+              <div className="flex items-center justify-between sm:justify-end gap-3 bg-[#0b1215] px-3.5 py-2 rounded-lg border border-gray-800/50 w-full sm:w-auto">
+                <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider">盈亏比 (R/R)</span>
+                <span className="text-xs font-mono font-bold text-white">{analysis.riskRewardRatio}:1</span>
+              </div>
           </div>
+        </div>
+
+        {/* 2. WIN RATE & SHIELD DRIVERS SECTION (Full-Width Responsive Grid) */}
+        <div className="mb-6 pb-6 border-b border-gray-800/50 flex flex-col gap-4">
+             <div 
+                 className="flex flex-wrap items-center gap-3 text-xs group relative cursor-pointer inline-flex self-start"
+                 onClick={() => setShowWinRateTip(!showWinRateTip)}
+                 onMouseEnter={() => setShowWinRateTip(true)}
+                 onMouseLeave={() => setShowWinRateTip(false)}
+             >
+                 <div className="text-gray-500 font-bold uppercase text-[10px] tracking-wide border-b border-dotted border-gray-600 flex items-center gap-1">
+                     胜率推演 (Calculated Win Rate) <HelpCircle className="w-3 h-3 text-gray-600 group-hover:text-blue-400"/>
+                 </div>
+                 <div className="h-2 w-24 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
+                     <div className={`h-full rounded-full transition-all duration-1000 ${isBuy ? 'bg-green-500' : isSell ? 'bg-red-500' : 'bg-gray-500'}`} style={{ width: `${analysis.winRate}%` }}></div>
+                 </div>
+                 <span className="font-mono font-bold text-white text-lg">{analysis.winRate}%</span>
+                 
+                 {/* Winrate Tooltip */}
+                  {showWinRateTip && (
+                     <div className="absolute top-full left-0 mt-2 w-56 bg-gray-900 border border-gray-700 p-3 rounded-lg z-50 text-[10px] text-gray-300 shadow-xl pointer-events-none">
+                         <strong className="text-white block mb-1">胜率计算逻辑</strong>
+                         <p className="leading-relaxed opacity-80">综合技术指标、主力资金、市场情绪及宏观环境四维因子加权计算得出。</p>
+                     </div>
+                  )}
+             </div>
+
+             <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-4 xl:gap-5 items-stretch w-full">
+                 {/* Score Drivers Grid */}
+                 {analysis.scoreDrivers && (
+                     <div className="sm:col-span-2 xl:col-span-1 flex flex-col justify-between">
+                         <h4 className="text-[10px] text-gray-500 font-bold uppercase mb-2 flex items-center gap-1.5 tracking-wider">
+                             <Sliders className="w-3.5 h-3.5 text-blue-400"/> 胜率归因因子 (Score Drivers)
+                         </h4>
+                         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-2 lg:grid-cols-4 gap-2 w-full">
+                              <ScoreDriverItem label="技术 (Tech)" weight={40} score={analysis.scoreDrivers?.technical ?? 50} color="text-blue-400" icon={<Activity className="w-3 h-3"/>} />
+                              <ScoreDriverItem label="资金 (Flow)" weight={30} score={analysis.scoreDrivers?.institutional ?? 50} color="text-yellow-400" icon={<Wallet className="w-3 h-3"/>} />
+                              <ScoreDriverItem label="情绪 (Sent)" weight={20} score={analysis.scoreDrivers?.sentiment ?? 50} color="text-green-400" icon={<Users className="w-3 h-3"/>} />
+                              <ScoreDriverItem label="宏观 (Macr)" weight={10} score={analysis.scoreDrivers?.macro ?? 50} color="text-purple-400" icon={<Globe className="w-3 h-3"/>} />
+                         </div>
+                     </div>
+                 )}
+
+                 {/* Mini Performance Divergence Chart (Explicit parent dimension) */}
+                 <div className="bg-[#0b1215]/60 border border-gray-800/80 rounded-xl p-3.5 flex flex-col gap-2.5 min-h-[142px] relative overflow-visible shrink-0 group/mini hover:border-blue-500/30 transition-colors w-full">
+                     <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wider text-gray-500 gap-2">
+                         <span className="flex items-center gap-1.5 whitespace-nowrap min-w-0 flex-shrink-0">
+                             <LineChart className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" /> 
+                             <span className="truncate">关联资产背离度</span>
+                         </span>
+                         <span className="text-[7px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono flex-shrink-0">DIVERGENCE</span>
+                     </div>
+                     
+                     <div className="flex-1 w-full h-[85px] min-h-[85px] relative mt-1">
+                         <ResponsiveContainer width="100%" height="100%">
+                             <AreaChart data={divergenceData} margin={{ top: 2, right: 4, left: 4, bottom: 12 }}>
+                                 <defs>
+                                     <linearGradient id="divergenceGreenBuy" x1="0" y1="0" x2="0" y2="1">
+                                         <stop offset="5%" stopColor="#00bfa5" stopOpacity={0.15}/>
+                                         <stop offset="95%" stopColor="#00bfa5" stopOpacity={0.01}/>
+                                     </linearGradient>
+                                     <linearGradient id="divergenceRedSell" x1="0" y1="0" x2="0" y2="1">
+                                         <stop offset="5%" stopColor="#ff5252" stopOpacity={0.15}/>
+                                         <stop offset="95%" stopColor="#ff5252" stopOpacity={0.01}/>
+                                     </linearGradient>
+                                     <linearGradient id="divergenceNeutral" x1="0" y1="0" x2="0" y2="1">
+                                         <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.15}/>
+                                         <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.01}/>
+                                     </linearGradient>
+                                 </defs>
+                                 
+                                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 7, fontFamily: 'monospace' }} interval="preserveStartEnd" dy={4} />
+                                 <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
+                                 <RechartsTooltip content={<MiniDivergenceTooltip />} />
+                                 
+                                 {/* Reference Asset (SPY/QQQ/CN300) Area */}
+                                 <Area 
+                                     type="monotone" 
+                                     dataKey="reference" 
+                                     name="关联参考"
+                                     stroke="#64748b" 
+                                     strokeWidth={1} 
+                                     strokeDasharray="2 2"
+                                     fill="rgba(100, 116, 139, 0.02)" 
+                                     dot={false}
+                                     activeDot={false}
+                                 />
+                                 
+                                 {/* Selected Asset Area */}
+                                 <Area 
+                                     type="monotone" 
+                                     dataKey="asset" 
+                                     name={symbol}
+                                     stroke={isBuy ? "#00bfa5" : isSell ? "#ff5252" : "#94a3b8"} 
+                                     strokeWidth={1.5} 
+                                     fill={isBuy ? "url(#divergenceGreenBuy)" : isSell ? "url(#divergenceRedSell)" : "url(#divergenceNeutral)"}
+                                     dot={false} 
+                                 />
+                             </AreaChart>
+                         </ResponsiveContainer>
+                     </div>
+                 </div>
+             </div>
         </div>
 
         {/* Scrollable Content - With visual "Logic Chain" line */}
@@ -1522,6 +1741,8 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ analysis, loading, error, o
                                         </div>
                                     </div>
                                 </div>
+
+
                                 
                                 {/* Key Levels & Prediction */}
                                 <div className="grid grid-cols-2 gap-3">

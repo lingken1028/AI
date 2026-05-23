@@ -349,17 +349,9 @@ const getTimeframeInstructions = (tf: Timeframe): string => {
 };
 
 export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, currentPrice: number, imageBase64?: string, isLockedPrice: boolean = false): Promise<RealTimeAnalysis> => {
-    let targetPrice = currentPrice;
-    if (!isLockedPrice) {
-        try {
-            const p = await fetchRealTimePrice(symbol);
-            if (p && p > 0) {
-                targetPrice = p;
-            }
-        } catch (e) {
-            console.warn("Direct price fetch in analyzeMarketData failed:", e);
-        }
-    }
+    // Strictly respect the input currentPrice passed from the frontend UI as the anchor.
+    // This prevents any unsanitized background price drift or jumping upon analysis refresh.
+    const targetPrice = currentPrice;
 
     const ai = initAI();
 
@@ -876,9 +868,9 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
         return generateFallbackAnalysis(symbol, timeframe, targetPrice);
     }
 
-    // Use gemini-3.1-pro-preview for both text and multimodal analysis as it supports reasoning + vision + tools.
+    // Use gemini-3.5-flash for both text and multimodal analysis as it supports reasoning + vision + tools.
     const requestContents: any = {
-      model: 'gemini-3.1-pro-preview', 
+      model: 'gemini-3.5-flash', 
       config: {
           systemInstruction: systemPrompt,
           tools: [{ googleSearch: {} }],
@@ -908,9 +900,11 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
     try {
         let result;
         try {
+            console.log("Executing high-fidelity analysis with reasoning engine gemini-3.1-pro-preview...");
+            requestContents.model = 'gemini-3.1-pro-preview';
             result = await ai.models.generateContent(requestContents);
         } catch (apiError: any) {
-            console.warn("Primary model gemini-3.1-pro-preview failed. Retrying with gemini-3.5-flash...", apiError);
+            console.warn("Primary model gemini-3.1-pro-preview failed or billing not enabled. Falling back to quick-response gemini-3.5-flash...", apiError);
             requestContents.model = 'gemini-3.5-flash';
             result = await ai.models.generateContent(requestContents);
         }
@@ -921,11 +915,15 @@ export const analyzeMarketData = async (symbol: string, timeframe: Timeframe, cu
 
         // --- SANITIZER & LOGIC GATES ---
         
-        // 1. Defaults
+        // 1. Force realTimePrice to exactly anchor the input targetPrice so that prices 
+        // NEVER jump or change unexpectedly after the AI analysis completes.
+        data.realTimePrice = targetPrice;
+        
+        // 2. Defaults
         const baseScore = data.winRate || 50;
         if (!data.scoreDrivers) data.scoreDrivers = { technical: baseScore, institutional: baseScore, sentiment: baseScore, macro: baseScore };
         
-        // 2. Number Parsing
+        // 3. Number Parsing
         ['realTimePrice', 'entryPrice', 'takeProfit', 'stopLoss', 'supportLevel', 'resistanceLevel'].forEach(key => {
             data[key] = parsePrice(data[key]);
         });
@@ -1125,6 +1123,7 @@ export const performBacktest = async (symbol: string, strategy: BacktestStrategy
     try {
         let result;
         try {
+            console.log("Simulating advanced portfolio backtest with reasoning engine gemini-3.1-pro-preview...");
             result = await ai.models.generateContent({
                 model: 'gemini-3.1-pro-preview', 
                 contents: prompt,
@@ -1135,7 +1134,7 @@ export const performBacktest = async (symbol: string, strategy: BacktestStrategy
                 }
             });
         } catch (apiError: any) {
-            console.warn("Primary backtest model failed. Retrying with gemini-3.5-flash...", apiError);
+            console.warn("Primary backtest model gemini-3.1-pro-preview failed or billing not enabled. Falling back to quick-response gemini-3.5-flash...", apiError);
             result = await ai.models.generateContent({
                 model: 'gemini-3.5-flash', 
                 contents: prompt,

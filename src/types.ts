@@ -333,3 +333,34 @@ export interface BacktestResult {
   equityCurveDescription: string; 
   insights: string;
 }
+
+export interface PaperPosition {
+  id: string;
+  symbol: string;
+  type: 'BUY' | 'SELL';
+  entryPrice: number;
+  currentPrice: number;
+  takeProfit: number;
+  stopLoss: number;
+  qty: number;
+  pnl: number;
+  pnlPercent: number;
+  timestamp: number;
+  status: 'ACTIVE' | 'CLOSED_TP' | 'CLOSED_SL' | 'CLOSED_MANUAL';
+  closedPrice?: number;
+  closedAt?: number;
+}
+
+export interface EquityHistoryPoint {
+  timestamp: number;
+  equity: number;
+  balance: number;
+}
+
+export interface PaperAccount {
+  balance: number;
+  initialBalance: number;
+  positions: PaperPosition[];
+  history: PaperPosition[];
+  equityHistory: EquityHistoryPoint[];
+}

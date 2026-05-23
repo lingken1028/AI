@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Activity, Clock, Menu, Search, TrendingUp, TrendingDown, X, Trash2, Plus, Loader2, BarChart2, ChevronUp, ChevronDown, Edit2, Check, Navigation, Target, ShieldAlert, Layers, Lock, Unlock, HelpCircle, Camera, Image as ImageIcon, RotateCw } from 'lucide-react';
+import { Activity, Clock, Menu, Search, TrendingUp, TrendingDown, X, Trash2, Plus, Loader2, BarChart2, ChevronUp, ChevronDown, Edit2, Check, Navigation, Target, ShieldAlert, Layers, Lock, Unlock, HelpCircle, Camera, Image as ImageIcon, RotateCw, Coins, CandlestickChart, Wallet, Bell, Sparkles } from 'lucide-react';
 import StockChart from './components/StockChart';
 import AnalysisCard from './components/AnalysisCard';
 import BacktestModal from './components/BacktestModal';
-import { Timeframe, AIAnalysis, StockSymbol, RealTimeAnalysis } from './types';
+import { Timeframe, AIAnalysis, StockSymbol, RealTimeAnalysis, PaperAccount, PaperPosition } from './types';
+import { DeepMiningDashboard } from './components/DeepMiningDashboard';
 import { TIMEFRAMES, formatCurrency, DEFAULT_WATCHLIST } from './constants';
 import { analyzeMarketData, lookupStockSymbol } from './services/apiClient';
 
@@ -34,6 +35,56 @@ const App: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   
   const [isBacktestOpen, setIsBacktestOpen] = useState(false);
+
+  // --- SUB-PANEL ACTIVE TAB ---
+  const [activeTab, setActiveTab ] = useState<'chart' | 'deep-mining'>('chart');
+  const [currentPricesMap, setCurrentPricesMap] = useState<Record<string, number>>({});
+  const [notifications, setNotifications] = useState<{ id: string; message: string; type: 'success' | 'danger' | 'info' }[]>([]);
+
+  const [paperAccount, setPaperAccount] = useState<PaperAccount>(() => {
+    try {
+      const saved = localStorage.getItem('tradeGuard_paper_account');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.positions)) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to parse paper account from localStorage", e);
+    }
+    return {
+      balance: 100000,
+      initialBalance: 100000,
+      positions: [],
+      history: [],
+      equityHistory: [{ timestamp: Date.now(), equity: 100000, balance: 100000 }]
+    };
+  });
+
+  // PERSISTENCE: Save paper trading account whenever it changes
+  useEffect(() => {
+    localStorage.setItem('tradeGuard_paper_account', JSON.stringify(paperAccount));
+  }, [paperAccount]);
+
+  // Sync selected symbol's currentPrice with currentPricesMap
+  useEffect(() => {
+    if (selectedSymbol.symbol && currentPrice) {
+      setCurrentPricesMap(prev => ({
+        ...prev,
+        [selectedSymbol.symbol]: currentPrice
+      }));
+    }
+  }, [selectedSymbol.symbol, currentPrice]);
+
+  // Push custom visual notification
+  const addNotification = useCallback((message: string, type: 'success' | 'danger' | 'info') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 6000);
+  }, []);
 
   // Price Editing State
   const [isEditingPrice, setIsEditingPrice] = useState(false);
@@ -81,14 +132,37 @@ const App: React.FC = () => {
   // NEW: Silent Price Auto-Refresh Interval (Optimized to 15s for Live Feel)
   useEffect(() => {
     const intervalId = setInterval(() => {
-        // Use Ref for instant check to avoid closure staleness
-        if (!isLockedRef.current && !isEditingPrice) {
-            refreshPriceSilent();
-        }
+        refreshAllPricesSilent();
     }, 15000); // 15 seconds
 
     return () => clearInterval(intervalId);
-  }, [selectedSymbol, isEditingPrice]); // Removed isPriceManuallySet from deps as Ref handles it
+  }, [selectedSymbol, isEditingPrice, paperAccount.positions]); 
+
+  const refreshAllPricesSilent = async () => {
+      // 1. Refresh currently selected stock
+      if (!isLockedRef.current && !isEditingPrice) {
+          await refreshPriceSilent();
+      }
+
+      // 2. Refresh active positions to trigger stop-losses / take-profits in background
+      const otherSymbols = paperAccount.positions
+          .map(p => p.symbol)
+          .filter((sym, idx, self) => sym !== selectedSymbol.symbol && self.indexOf(sym) === idx);
+
+      for (const sym of otherSymbols) {
+          try {
+              const freshData = await lookupStockSymbol(sym);
+              if (freshData && freshData.currentPrice > 0) {
+                  setCurrentPricesMap(prev => ({
+                      ...prev,
+                      [sym]: freshData.currentPrice
+                  }));
+              }
+          } catch (e) {
+              // Ignore background errors
+          }
+      }
+  };
 
   const refreshPriceSilent = async () => {
       // Capture symbol at start of operation
@@ -184,6 +258,257 @@ const App: React.FC = () => {
       }
   };
 
+  // --- AUTOMATED MARGIN & TP/SL CHECKER EFFECT ---
+  useEffect(() => {
+    let triggered = false;
+    const updatedPositions: PaperPosition[] = [];
+    const newlyClosed: PaperPosition[] = [];
+    let balanceChange = 0;
+
+    for (const pos of paperAccount.positions) {
+      const price = currentPricesMap[pos.symbol] || pos.currentPrice;
+      const initialSize = pos.qty * pos.entryPrice;
+      const currentSize = pos.qty * price;
+      const directionMult = pos.type === 'BUY' ? 1 : -1;
+      const pnl = (currentSize - initialSize) * directionMult;
+
+      let triggerCause: 'CLOSED_TP' | 'CLOSED_SL' | null = null;
+
+      if (pos.type === 'BUY') {
+        if (price >= pos.takeProfit) triggerCause = 'CLOSED_TP';
+        else if (price <= pos.stopLoss) triggerCause = 'CLOSED_SL';
+      } else { // SELL
+        if (price <= pos.takeProfit) triggerCause = 'CLOSED_TP';
+        else if (price >= pos.stopLoss) triggerCause = 'CLOSED_SL';
+      }
+
+      if (triggerCause) {
+        triggered = true;
+        const closedPos: PaperPosition = {
+          ...pos,
+          status: triggerCause,
+          closedPrice: price,
+          pnl,
+          pnlPercent: (pnl / initialSize) * 100,
+          closedAt: Date.now()
+        };
+        newlyClosed.push(closedPos);
+        balanceChange += (initialSize + pnl); // Return collateral + profit / loss
+        
+        // Notify user about execution
+        const sign = pos.symbol.split(':')[1] || pos.symbol;
+        const formattedPnL = pnl >= 0 ? `+${pnl.toFixed(2)}` : pnl.toFixed(2);
+        const emoji = triggerCause === 'CLOSED_TP' ? '🎯' : '🛡️';
+        const typeStr = triggerCause === 'CLOSED_TP' ? '触发目标止盈 (TP Hit)' : '触发止损保护 (SL Hit)';
+        addNotification(
+          `${emoji} [平仓结算] ${sign} ${pos.type === 'BUY' ? '做多' : '做空'}合约${typeStr}! 出场价: ${price}, 实现盈亏: ${formattedPnL} USD`,
+          pnl >= 0 ? 'success' : 'danger'
+        );
+      } else {
+        updatedPositions.push({
+          ...pos,
+          currentPrice: price,
+          pnl,
+          pnlPercent: (pnl / initialSize) * 100
+        });
+      }
+    }
+
+    if (triggered) {
+      setPaperAccount(prev => {
+        const nextBalance = prev.balance + balanceChange;
+        const nextHistory = [...prev.history, ...newlyClosed];
+        
+        // Live equity after exit
+        const nextActiveVal = updatedPositions.reduce((acc, pos) => {
+          const size = pos.qty * (currentPricesMap[pos.symbol] || pos.currentPrice);
+          return acc + size;
+        }, 0);
+        const nextLivePnL = updatedPositions.reduce((acc, pos) => {
+          const liveP = currentPricesMap[pos.symbol] || pos.currentPrice;
+          const initialS = pos.qty * pos.entryPrice;
+          const currentS = pos.qty * liveP;
+          const dir = pos.type === 'BUY' ? 1 : -1;
+          return acc + (currentS - initialS) * dir;
+        }, 0);
+        const nextEquity = nextBalance + nextLivePnL;
+
+        const nextEquityHistory = [
+          ...prev.equityHistory,
+          { timestamp: Date.now(), equity: nextEquity, balance: nextBalance }
+        ];
+
+        return {
+          ...prev,
+          balance: nextBalance,
+          positions: updatedPositions,
+          history: nextHistory,
+          equityHistory: nextEquityHistory
+        };
+      });
+    }
+  }, [currentPricesMap, paperAccount.positions, addNotification]);
+
+  // Handle Trade Execution Callback
+  const handleExecutePaperTrade = (params: {
+    symbol: string;
+    type: 'BUY' | 'SELL';
+    entryPrice: number;
+    takeProfit: number;
+    stopLoss: number;
+  }) => {
+    // Determine actual market price seen on screen to prevent discrepancies or instant Stop-Loss/Take-Profit triggers
+    const actualPrice = params.symbol === selectedSymbol.symbol 
+      ? currentPrice 
+      : (currentPricesMap[params.symbol] || params.entryPrice);
+
+    if (!actualPrice || actualPrice <= 0) {
+      addNotification(`🛑 [沙盘拒单] 无法猎取当前标的的有效最新价格，开仓失败。`, 'danger');
+      return;
+    }
+
+    // Proportional scaling function to adjust TP / SL percentage based on exact entry deviation
+    const formatPricePrecision = (val: number, refPrice: number): number => {
+      if (refPrice < 1) return Number(val.toFixed(6));
+      if (refPrice < 10) return Number(val.toFixed(4));
+      return Number(val.toFixed(2));
+    };
+
+    const aiEntry = (params.entryPrice && params.entryPrice > 0) ? params.entryPrice : actualPrice;
+    const tpRatio = params.takeProfit / aiEntry;
+    const slRatio = params.stopLoss / aiEntry;
+
+    const adjustedTakeProfit = formatPricePrecision(actualPrice * tpRatio, actualPrice);
+    const adjustedStopLoss = formatPricePrecision(actualPrice * slRatio, actualPrice);
+
+    // 15% cash allocation of balance for simulated leverage discipline
+    const allocation = paperAccount.balance * 0.15;
+    if (allocation <= 0 || paperAccount.balance <= allocation) {
+      addNotification(`🛑 [沙盘拒单] 账户现金余额不足以承兑当前头寸保证金!`, 'danger');
+      return;
+    }
+
+    const qty = Math.floor(allocation / actualPrice);
+    if (qty <= 0) {
+      addNotification(`🛑 [沙盘拒单] 配置资金无法满足起步开仓 1 股的需求（资产价格 ${formatCurrency(actualPrice)} 过高）`, 'danger');
+      return;
+    }
+
+    // Stop duplicate positions
+    const duplicate = paperAccount.positions.find(p => p.symbol === params.symbol && p.type === params.type);
+    if (duplicate) {
+      addNotification(`⚠️ [持仓警告] 您当前已持有 ${params.symbol} 的 ${params.type === 'BUY' ? '做多' : '做空'} 合约，请勿重复开仓。`, 'info');
+      setActiveTab('paper-trade');
+      return;
+    }
+
+    const newPosition: PaperPosition = {
+      id: Math.random().toString(36).substring(2, 9),
+      symbol: params.symbol,
+      type: params.type,
+      entryPrice: actualPrice,
+      currentPrice: actualPrice,
+      takeProfit: adjustedTakeProfit,
+      stopLoss: adjustedStopLoss,
+      qty,
+      pnl: 0,
+      pnlPercent: 0,
+      timestamp: Date.now(),
+      status: 'ACTIVE'
+    };
+
+    setPaperAccount(prev => {
+      const nextBalance = prev.balance - (actualPrice * qty);
+      const nextPositions = [...prev.positions, newPosition];
+      
+      const nextEquity = nextBalance + (actualPrice * qty);
+      const nextEquityHistory = [
+        ...prev.equityHistory,
+        { timestamp: Date.now(), equity: nextEquity, balance: nextBalance }
+      ];
+
+      return {
+        ...prev,
+        balance: nextBalance,
+        positions: nextPositions,
+        equityHistory: nextEquityHistory
+      };
+    });
+
+    // Make sure currentPricesMap has the newest price
+    setCurrentPricesMap(prev => ({
+      ...prev,
+      [params.symbol]: actualPrice
+    }));
+
+    addNotification(`🚀 [开仓成交] 沙盘即时跟单成交! ${params.symbol.split(':')[1] || params.symbol} ${params.type === 'BUY' ? '做多 (BUY)' : '做空 (SELL)'}. 成交价: ${formatCurrency(actualPrice)}, 头寸: ${qty.toLocaleString()} 股 (止盈: ${formatCurrency(adjustedTakeProfit)}, 止损: ${formatCurrency(adjustedStopLoss)})`, 'success');
+    setActiveTab('paper-trade');
+  };
+
+  const handleClosePosition = (id: string, currentPriceOverride?: number) => {
+    const pos = paperAccount.positions.find(p => p.id === id);
+    if (!pos) return;
+
+    const price = currentPriceOverride || currentPricesMap[pos.symbol] || pos.currentPrice;
+    const initialSize = pos.qty * pos.entryPrice;
+    const currentSize = pos.qty * price;
+    const directionMult = pos.type === 'BUY' ? 1 : -1;
+    const pnl = (currentSize - initialSize) * directionMult;
+
+    const closedPos: PaperPosition = {
+      ...pos,
+      status: 'CLOSED_MANUAL',
+      closedPrice: price,
+      pnl,
+      pnlPercent: (pnl / initialSize) * 100,
+      closedAt: Date.now()
+    };
+
+    setPaperAccount(prev => {
+      const remainingPositions = prev.positions.filter(p => p.id !== id);
+      const nextBalance = prev.balance + (initialSize + pnl);
+      const nextHistory = [...prev.history, closedPos];
+      
+      const activePnL = remainingPositions.reduce((acc, p) => {
+        const liveP = currentPricesMap[p.symbol] || p.currentPrice;
+        const initialS = p.qty * p.entryPrice;
+        const currentS = p.qty * liveP;
+        const dir = p.type === 'BUY' ? 1 : -1;
+        return acc + (currentS - initialS) * dir;
+      }, 0);
+      const nextEquity = nextBalance + activePnL;
+
+      const nextEquityHistory = [
+        ...prev.equityHistory,
+        { timestamp: Date.now(), equity: nextEquity, balance: nextBalance }
+      ];
+
+      return {
+        ...prev,
+        balance: nextBalance,
+        positions: remainingPositions,
+        history: nextHistory,
+        equityHistory: nextEquityHistory
+      };
+    });
+
+    addNotification(`✋ [手动平仓] 顺利结束持仓: ${pos.symbol.split(':')[1] || pos.symbol}. 退出结算价: ${price}, 实现盈亏: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USD`, pnl >= 0 ? 'success' : 'danger');
+  };
+
+  const handleResetAccount = () => {
+    if (window.confirm("确定要立即重置模拟诊断账户吗？重置后您的历史资产曲线与所有成交结算细节均会彻底擦除。")) {
+      const resetAcc: PaperAccount = {
+        balance: 100000,
+        initialBalance: 100000,
+        positions: [],
+        history: [],
+        equityHistory: [{ timestamp: Date.now(), equity: 100000, balance: 100000 }]
+      };
+      setPaperAccount(resetAcc);
+      addNotification(`💫 [账户重置] 模拟交易舱回归起始状态，已补足 100,000 USD 虚拟准备金。`, 'info');
+    }
+  };
+
   // Image Upload Handler
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -213,31 +538,14 @@ const App: React.FC = () => {
     setIsLoading(true);
     setError(null);
     
-    let analysisAnchorPrice = currentPrice;
+    let analysisAnchorPrice = currentPrice || selectedSymbol.currentPrice;
 
     try {
       // Step 0: Logic for Price Source
-      // Use Ref to be safe
-      if (isLockedRef.current) {
-          console.log("Using LOCKED price for analysis:", currentPrice);
-          analysisAnchorPrice = currentPrice;
-      } else {
-          try {
-             const freshData = await lookupStockSymbol(selectedSymbol.symbol);
-             
-             // Check lock again after async fetch
-             if (!isLockedRef.current && freshData && freshData.currentPrice > 0) {
-                 analysisAnchorPrice = freshData.currentPrice;
-                 setCurrentPrice(analysisAnchorPrice); 
-                 
-                 setWatchlist(prev => prev.map(s => 
-                    s.symbol === selectedSymbol.symbol ? { ...s, currentPrice: analysisAnchorPrice } : s
-                 ));
-             }
-          } catch (priceErr) {
-             console.warn("Analysis pre-check price refresh failed", priceErr);
-          }
-      }
+      // Both locked and AI real-time anchoring strictly align with the displayed price (currentPrice)
+      // to avoid price jumps or unexpected shifts on screen refresh / re-analysis.
+      // The background 15s timer or manual price refresh handles the real-time ticker updates.
+      analysisAnchorPrice = currentPrice || selectedSymbol.currentPrice;
 
       // Step 1: Analyze using the anchor price AND image if available
       const result: RealTimeAnalysis = await analyzeMarketData(
@@ -250,7 +558,8 @@ const App: React.FC = () => {
       
       setAnalysis(result);
       
-      // ONLY update the display price from AI result if NOT locked (Check Ref)
+      // Keep the displayed price firmly locked onto the analysis anchor price 
+      // without jumping to a different value after the AI response completes.
       if (!isLockedRef.current && result.realTimePrice) {
           setCurrentPrice(result.realTimePrice);
       }
@@ -368,7 +677,31 @@ const App: React.FC = () => {
   const hourDayTimeframes = [Timeframe.H1, Timeframe.H2, Timeframe.H4, Timeframe.D1];
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden selection:bg-emerald-500/20">
+    <div className="flex h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden selection:bg-emerald-500/20 relative">
+      
+      {/* Visual Floating Notifications Portal */}
+      <div className="fixed top-6 right-6 z-[99999] max-w-sm w-full space-y-3 pointer-events-none">
+        {notifications.map(n => (
+          <div
+            key={n.id}
+            className={`p-4 rounded-xl border flex items-start gap-3 shadow-2xl bg-slate-900/95 backdrop-blur-md pointer-events-auto transition-all duration-300 animate-in slide-in-from-top-4 border-l-4 ${
+              n.type === 'success' ? 'border-l-emerald-500 border-slate-800' :
+              n.type === 'danger' ? 'border-l-red-500 border-slate-800' :
+              'border-l-indigo-505 border-slate-800'
+            }`}
+          >
+            <div className="flex-1 text-[11px] leading-relaxed text-slate-200">
+              {n.message}
+            </div>
+            <button
+              onClick={() => setNotifications(prev => prev.filter(item => item.id !== n.id))}
+              className="text-slate-500 hover:text-white shrink-0 cursor-pointer transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
       
       <BacktestModal 
         isOpen={isBacktestOpen} 
@@ -670,57 +1003,96 @@ const App: React.FC = () => {
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               
-              {/* Left Column: Chart & Stats */}
+              {/* Left Column: Chart & Stats OR Paper Trading Sandbox */}
               <div className="xl:col-span-2 flex flex-col gap-6">
-                <StockChart 
-                    symbol={selectedSymbol.symbol} 
-                    timeframe={selectedTimeframe} 
-                    onRefreshPrice={refreshPriceForce} 
-                />
                 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                   <StatCard 
-                        label="关键阻力 (Resistance)" 
-                        value={analysis ? formatCurrency(analysis.resistanceLevel || 0) : '---'} 
-                        color="text-red-400" 
-                        icon={<TrendingUp className="w-3 h-3"/>} 
-                   />
-                   <StatCard 
-                        label="关键支撑 (Support)" 
-                        value={analysis ? formatCurrency(analysis.supportLevel || 0) : '---'} 
-                        color="text-emerald-400" 
-                        icon={<TrendingDown className="w-3 h-3"/>} 
-                   />
-                   <StatCard 
-                        label="历史回测胜率 (Backtest)" 
-                        value={analysis ? `${analysis.historicalWinRate}%` : '---'} 
-                        color="text-blue-400" 
-                        icon={<Activity className="w-3 h-3"/>}
-                        tooltip={
-                            <div>
-                                <strong className="text-white block mb-1">模式匹配 (Pattern Match)</strong>
-                                检索过去 5 年类似 K 线形态（如双底、突破），计算其在随后走势中的上涨概率。
-                            </div>
-                        }
-                   />
-                   <StatCard 
-                        label="AI 预测胜率 (Prob.)" 
-                        value={analysis ? `${analysis.winRate}%` : '---'} 
-                        color="text-yellow-400" 
-                        icon={<Target className="w-3 h-3"/>}
-                        tooltip={
-                            <div>
-                                <strong className="text-white block mb-2 border-b border-slate-755 pb-1 font-mono">权重模型 (Weighting)</strong>
-                                <ul className="text-[10px] space-y-1 font-mono">
-                                    <li className="flex justify-between w-full gap-4"><span>技术面</span> <span className="text-emerald-400 font-bold">40%</span></li>
-                                    <li className="flex justify-between w-full gap-4"><span>资金面</span> <span className="text-yellow-400 font-bold">30%</span></li>
-                                    <li className="flex justify-between w-full gap-4"><span>情绪面</span> <span className="text-blue-400 font-bold">20%</span></li>
-                                    <li className="flex justify-between w-full gap-4"><span>宏观面</span> <span className="text-purple-400 font-bold">10%</span></li>
-                                </ul>
-                            </div>
-                        }
-                   />
+                {/* Advanced Tab Navigation */}
+                <div className="flex bg-[#0b1215] border border-slate-800 p-1 rounded-2xl shrink-0">
+                  <button
+                    onClick={() => setActiveTab('chart')}
+                    className={`flex-1 py-3 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                      activeTab === 'chart' 
+                        ? 'bg-slate-800 text-white shadow-xl border border-slate-700/60 font-black' 
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                    id="tab-chart"
+                  >
+                    <CandlestickChart className="w-4 h-4 text-emerald-400" />
+                    技术指标 & 实时K线图表
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('deep-mining')}
+                    className={`flex-1 py-3 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer relative ${
+                      activeTab === 'deep-mining' 
+                        ? 'bg-slate-800 text-white shadow-xl border border-slate-700/60 font-black' 
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    id="tab-deep-mining"
+                  >
+                    <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                    量化挖掘与决策舱
+                  </button>
                 </div>
+
+                {activeTab === 'chart' ? (
+                  <>
+                    <StockChart 
+                        symbol={selectedSymbol.symbol} 
+                        timeframe={selectedTimeframe} 
+                        onRefreshPrice={refreshPriceForce} 
+                    />
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                       <StatCard 
+                            label="关键阻力 (Resistance)" 
+                            value={analysis ? formatCurrency(analysis.resistanceLevel || 0) : '---'} 
+                            color="text-red-400" 
+                            icon={<TrendingUp className="w-3 h-3"/>} 
+                       />
+                       <StatCard 
+                            label="关键支撑 (Support)" 
+                            value={analysis ? formatCurrency(analysis.supportLevel || 0) : '---'} 
+                            color="text-emerald-400" 
+                            icon={<TrendingDown className="w-3 h-3"/>} 
+                       />
+                       <StatCard 
+                            label="历史回测胜率 (Backtest)" 
+                            value={analysis ? `${analysis.historicalWinRate}%` : '---'} 
+                            color="text-blue-400" 
+                            icon={<Activity className="w-3 h-3"/>}
+                            tooltip={
+                                <div>
+                                    <strong className="text-white block mb-1">模式匹配 (Pattern Match)</strong>
+                                    检索过去 5 年类似 K 线形态（如双底、突破），计算其在随后走势中的上涨概率。
+                                </div>
+                            }
+                       />
+                       <StatCard 
+                            label="AI 预测胜率 (Prob.)" 
+                            value={analysis ? `${analysis.winRate}%` : '---'} 
+                            color="text-yellow-400" 
+                            icon={<Target className="w-3 h-3"/>}
+                            tooltip={
+                                <div>
+                                    <strong className="text-white block mb-2 border-b border-slate-755 pb-1 font-mono">权重模型 (Weighting)</strong>
+                                    <ul className="text-[10px] space-y-1 font-mono">
+                                        <li className="flex justify-between w-full gap-4"><span>技术面</span> <span className="text-emerald-400 font-bold">40%</span></li>
+                                        <li className="flex justify-between w-full gap-4"><span>资金面</span> <span className="text-yellow-400 font-bold">30%</span></li>
+                                        <li className="flex justify-between w-full gap-4"><span>情绪面</span> <span className="text-blue-400 font-bold">20%</span></li>
+                                        <li className="flex justify-between w-full gap-4"><span>宏观面</span> <span className="text-purple-400 font-bold">10%</span></li>
+                                    </ul>
+                                </div>
+                            }
+                       />
+                    </div>
+                  </>
+                ) : (
+                  <DeepMiningDashboard 
+                    symbol={selectedSymbol.symbol}
+                    analysis={analysis}
+                    currentPrice={currentPrice}
+                  />
+                )}
               </div>
 
               {/* Right Column: AI Analysis */}
@@ -731,6 +1103,7 @@ const App: React.FC = () => {
                   error={error}
                   onAnalyze={fetchMarketAnalysis} 
                   symbol={selectedSymbol.symbol}
+                  timeframe={selectedTimeframe}
                 />
               </div>
 
