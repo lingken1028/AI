@@ -1,0 +1,6 @@
+{
+  "name": "TradeGuard Stock Analyzer",
+  "description": "Professional full-stack stock analysis application powered by Gemini 3.1 Pro, with advanced technical scanner, Wyckoff cycle detection, retail sentiment divergence, options gamma pain curves, and backtesting simulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
